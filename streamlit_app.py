@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import os
+import traceback
 
 # 把当前目录加入 Python 路径，以便导入你的代码
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -31,9 +32,10 @@ if st.button("开始处理", key="process_button"):
                 
                 # 一键复制按钮（添加 key）
                 st.markdown(f"""
-                <button onclick="navigator.clipboard.writeText(`{result}`)" key="copy_button">一键复制结果</button>
+                <button onclick="navigator.clipboard.writeText(`{result}`)">一键复制结果</button>
                 """, unsafe_allow_html=True)
             except Exception as e:
                 st.error(f"处理失败：{str(e)}")
+                st.code(traceback.format_exc())  # 显示完整的错误堆栈
     else:
         st.warning("请输入需要处理的文本！")
