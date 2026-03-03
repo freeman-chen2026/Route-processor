@@ -11,11 +11,11 @@ from route_app import step1_extract, step2_reduce, step3_add_hash
 # ===================== Streamlit 网页界面 =====================
 st.title("✈️ 航路文本处理工具")
 
-# 输入框
-input_text = st.text_area("请输入待处理的航路文本：", height=200)
+# 输入框（添加 key）
+input_text = st.text_area("请输入待处理的航路文本：", height=200, key="route_input")
 
-# 处理按钮
-if st.button("开始处理"):
+# 处理按钮（添加 key）
+if st.button("开始处理", key="process_button"):
     if input_text.strip():
         with st.spinner("正在处理..."):
             try:
@@ -25,13 +25,13 @@ if st.button("开始处理"):
                     seq = step3_add_hash(seq)
                 result = ' '.join(seq)
                 
-                # 显示结果
+                # 显示结果（添加 key）
                 st.success("处理完成！")
-                st.code(result, language="text")
+                st.code(result, language="text", key="result_code")
                 
-                # 一键复制按钮
+                # 一键复制按钮（添加 key）
                 st.markdown(f"""
-                <button onclick="navigator.clipboard.writeText(`{result}`)">一键复制结果</button>
+                <button onclick="navigator.clipboard.writeText(`{result}`)" key="copy_button">一键复制结果</button>
                 """, unsafe_allow_html=True)
             except Exception as e:
                 st.error(f"处理失败：{str(e)}")
