@@ -277,4 +277,5 @@ def main():
     print(' '.join(seq))
 
 if __name__ == "__main__":
+
     main()
