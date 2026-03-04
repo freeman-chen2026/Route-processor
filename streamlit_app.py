@@ -2,116 +2,139 @@ import re
 import streamlit as st
 import traceback
 
-# ===================== 核心航路处理代码（重构优化版） =====================
+# ===================== 核心航路处理代码 =====================
 def parse_coord(coord_str):
-    """坐标解析，增加异常捕获"""
-    try:
-        letter = coord_str[0]
-        num_part = coord_str[1:].replace('.', '')
-        if not num_part.isdigit():
-            return None
-
-        if letter == 'N':
-            if len(num_part) < 6:
-                return None
-            deg = int(num_part[0:2])
-            minute = int(num_part[2:4])
-            sec_int = int(num_part[4:6])
-        elif letter == 'E':
-            if len(num_part) < 7:
-                return None
-            deg = int(num_part[0:3])
-            minute = int(num_part[3:5])
-            sec_int = int(num_part[5:7])
+    """将坐标字符串（如 N252723.88 或 E1080859.53）转换为四舍五入后的整数部分，
+    纬度返回6位数字，经度返回7位数字，自动处理进位。"""
+    letter = coord_str[0]
+    num_part = coord_str[1:]
+    if letter == 'N':
+        deg = int(num_part[0:2])
+        minute = int(num_part[2:4])
+        sec_part = num_part[4:]
+        if '.' in sec_part:
+            sec_float = float(sec_part)
+            sec_int = int(round(sec_float))
         else:
-            return None
-
-        # 进位处理
+            sec_int = int(sec_part)
         if sec_int >= 60:
             sec_int -= 60
             minute += 1
-        if minute >= 60:
-            minute -= 60
-            deg += 1
-
-        return f"{deg:02d}{minute:02d}{sec_int:02d}" if letter == 'N' else f"{deg:03d}{minute:02d}{sec_int:02d}"
-    except Exception:
-        return None
+            if minute >= 60:
+                minute -= 60
+                deg += 1
+        return f"{deg:02d}{minute:02d}{sec_int:02d}"
+    elif letter == 'E':
+        deg = int(num_part[0:3])
+        minute = int(num_part[3:5])
+        sec_part = num_part[5:]
+        if '.' in sec_part:
+            sec_float = float(sec_part)
+            sec_int = int(round(sec_float))
+        else:
+            sec_int = int(sec_part)
+        if sec_int >= 60:
+            sec_int -= 60
+            minute += 1
+            if minute >= 60:
+                minute -= 60
+                deg += 1
+        return f"{deg:03d}{minute:02d}{sec_int:02d}"
+    else:
+        raise ValueError(f"未知的坐标前缀: {letter}")
 
 def base_name(s):
-    return s.split('@')[0] if '@' in s else s
+    """返回点的基础名称（去掉@后面的部分）"""
+    return s.split('@')[0]
 
 def is_open_point(s):
+    """判断是否为开放点（纯字母2-5位，或P后跟全字母）"""
     base = base_name(s)
-    return re.match(r'^[A-Z]{2,5}$', base) or re.match(r'^P[A-Z]+$', base)
+    if re.match(r'^[A-Z]{2,5}$', base):
+        return True
+    if re.match(r'^P[A-Z]+$', base):
+        return True
+    return False
 
 def is_p_point(s):
+    """判断是否为不开放P点（P后跟数字）"""
     base = base_name(s)
     return re.match(r'^P\d+$', base) is not None
 
 def clean_route(r):
-    return r.lstrip('#')
+    """去掉航路可能的#前缀（用于比较）"""
+    if r.startswith('#'):
+        return r[1:]
+    return r
 
 def is_open_route(rt):
+    """判断是否为开放航路（不以 H/J/V 开头）"""
     return rt and rt[0] not in ('H', 'J', 'V')
 
+# ---------- 表格格式提取 ----------
 def extract_table(text):
-    """重构表格提取，确保点和航路数量严格匹配"""
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    """处理带坐标的表格数据"""
+    tokens = text.strip().split()
+    # 找到第一个数字序号
+    start_idx = 0
+    for i, tok in enumerate(tokens):
+        if tok.isdigit() and 1 <= int(tok) <= 40:
+            start_idx = i
+            break
+    tokens = tokens[start_idx:]
+    # 按序号分组
+    lines = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i].isdigit():
+            line = [tokens[i]]
+            i += 1
+            while i < len(tokens) and not tokens[i].isdigit():
+                line.append(tokens[i])
+                i += 1
+            lines.append(line)
     points = []
     routes = []
-
     for line in lines:
-        tokens = re.split(r'\s+', line)
-        # 过滤无效行（无数字序号或无足够字段）
-        if len(tokens) < 3 or not tokens[0].isdigit():
+        # 找到纬度坐标
+        lat_idx = None
+        for idx, tok in enumerate(line):
+            if tok.startswith('N') and tok[1:].replace('.', '', 1).isdigit():
+                lat_idx = idx
+                break
+        if lat_idx is None:
             continue
-
-        # 提取点名称（序号后第一个符合规则的字符）
+        lon_idx = lat_idx + 1
+        if lon_idx >= len(line) or not line[lon_idx].startswith('E'):
+            continue
+        lat_str = line[lat_idx]
+        lon_str = line[lon_idx]
+        # 航路（经度之后的下一个token）
+        route = None
+        if lon_idx + 1 < len(line):
+            next_tok = line[lon_idx + 1]
+            if re.match(r'^[A-Z][A-Z0-9]*$', next_tok) and not next_tok[0].isdigit():
+                route = next_tok
+        # 从纬度之前向前找点名称
         point_name = None
-        for tok in tokens[1:]:
+        for j in range(lat_idx - 1, 0, -1):
+            tok = line[j]
             if is_open_point(tok) or is_p_point(tok):
                 point_name = tok
                 break
-        if not point_name:
+        if point_name is None:
             continue
-
-        # 提取坐标（仅做P点拼接用，非必须）
-        lat_str, lon_str = None, None
-        for i, tok in enumerate(tokens):
-            if tok.startswith('N') and parse_coord(tok):
-                lat_str = tok
-                if i+1 < len(tokens) and tokens[i+1].startswith('E') and parse_coord(tokens[i+1]):
-                    lon_str = tokens[i+1]
-                break
-
-        # 提取航路（点名称后第一个符合规则的字符）
-        route = None
-        point_idx = tokens.index(point_name) if point_name in tokens else -1
-        if point_idx != -1:
-            for tok in tokens[point_idx+1:]:
-                if re.match(r'^[A-Z][A-Z0-9]*$', tok) and not tok[0].isdigit():
-                    route = tok
-                    break
-
-        # 处理P点显示
-        point_display = point_name
-        if is_p_point(point_name) and lat_str and lon_str:
+        # 处理P点坐标
+        if is_p_point(point_name):
             lat_int = parse_coord(lat_str)
             lon_int = parse_coord(lon_str)
-            if lat_int and lon_int:
-                point_display = f"{point_name}@{lat_int}N{lon_int}E"
-
+            point_display = f"{point_name}@{lat_int}N{lon_int}E"
+        else:
+            point_display = point_name
         points.append(point_display)
-        if route:
+        if route is not None:
             routes.append(route)
-
-    # 强制保证点和航路数量匹配（核心修复）
-    min_len = min(len(points), len(routes) + 1)
-    points = points[:min_len]
-    routes = routes[:min_len - 1]
-
-    # 构建序列
+    # 构建点-航路交替序列
     seq = []
     for i in range(len(points)):
         seq.append(points[i])
@@ -119,153 +142,126 @@ def extract_table(text):
             seq.append(routes[i])
     return seq
 
+# ---------- 中文描述提取 ----------
 def extract_chinese(text):
-    """优化中文提取，减少正则开销"""
+    """处理纯中文描述的航路数据（无坐标）"""
+    # 将中文和中文标点替换为空格
     text = re.sub(r'[\u4e00-\u9fa5，、。；：""''（）【】]', ' ', text)
-    words = [w for w in text.split() if w.strip()]
+    words = text.split()
     seq = []
-
     for w in words:
-        # 带括号格式
+        # 处理带括号的（如 R339南康VOR(BHY) -> R339 BHY）
         if '(' in w and ')' in w:
             m = re.search(r'\(([A-Z]+)\)', w)
             if m:
+                point = m.group(1)
                 prefix = w[:w.find('(')]
                 m_route = re.search(r'([A-Z]\d+)$', prefix)
                 if m_route:
                     seq.append(m_route.group(1))
-                seq.append(m.group(1))
-        # 航路+点组合
-        elif re.match(r'^[A-Z]\d+([A-Z]{2,5}|P\d+)$', w):
+                seq.append(point)
+        # 处理航路+点组合（如 W285DUMAX）
+        elif re.match(r'^[A-Z]\d+[A-Z]{2,5}$', w) or re.match(r'^[A-Z]\d+P\d+$', w):
             m = re.match(r'^([A-Z]\d+)([A-Z]{2,5}|P\d+)$', w)
             if m:
                 seq.append(m.group(1))
                 seq.append(m.group(2))
-        # 单独航路/点
-        elif re.match(r'^[A-Z]\d+$', w) or is_open_point(w) or is_p_point(w):
+        # 单独航路
+        elif re.match(r'^[A-Z]\d+$', w):
             seq.append(w)
+        # 单独点
+        elif is_open_point(w) or is_p_point(w):
+            seq.append(w)
+        # 其他忽略（如中文残留、无关英文）
     return seq
 
+# ---------- 步骤1：根据输入类型提取 ----------
 def step1_extract(text):
-    """增加空值校验"""
-    if not text:
-        return [], 'empty'
-    if re.search(r'N\d{6,}\s+E\d{7,}', text):
+    """判断输入类型并提取点和航路，返回 (seq, format_type)"""
+    # 检测是否有坐标模式（如 N332344 E1085114）
+    if re.search(r'N\d{5,6}(?:\.\d+)?\s+E\d{6,7}(?:\.\d+)?', text):
         return extract_table(text), 'table'
     else:
         return extract_chinese(text), 'chinese'
 
+# ---------- 步骤2：精简相同开放航路 ----------
 def step2_reduce(seq):
-    """优化精简逻辑，避免无限循环"""
-    if len(seq) < 5:
-        return seq  # 长度不足，无需精简
+    """精简相同开放航路连续且首尾开放点的段落"""
     L = seq[:]
-    max_iter = 10  # 限制最大迭代次数，防止长文本卡住
-    iter_count = 0
-
-    while iter_count < max_iter:
+    changed = True
+    while changed:
         changed = False
         n = len(L)
-        best_candidate = None
-
+        candidates = []  # (i, j, length)  length为航路数量
         for i in range(0, n, 2):
-            if i + 1 >= n or not is_open_point(L[i]) or not is_open_route(clean_route(L[i+1])):
+            if not is_open_point(L[i]):
+                continue
+            if i + 1 >= n:
                 continue
             first_route = clean_route(L[i+1])
-
-            for j in range(i+4, n, 2):  # 至少间隔2个航路才精简
-                if not is_open_point(L[j]):
-                    break
-                # 检查中间航路是否全相同
+            if not is_open_route(first_route):
+                continue
+            for j in range(i+2, n, 2):
                 all_same = True
                 for k in range(i+1, j, 2):
-                    if k >= n or clean_route(L[k]) != first_route or not is_open_route(clean_route(L[k])):
+                    rt = clean_route(L[k])
+                    if rt != first_route or not is_open_route(rt):
                         all_same = False
                         break
-                if all_same:
-                    candidate = (i, j, (j-i)//2)
-                    if not best_candidate or candidate[2] > best_candidate[2]:
-                        best_candidate = candidate
-
-        if best_candidate:
-            i, j, _ = best_candidate
-            new_segment = [L[i], L[i+1], L[j]]
-            L = L[:i] + new_segment + L[j+1:]
-            changed = True
-        if not changed:
+                if not all_same:
+                    break
+                if is_open_point(L[j]):
+                    length = (j - i) // 2
+                    if length >= 2:
+                        candidates.append((i, j, length))
+        if not candidates:
             break
-        iter_count += 1
+        candidates.sort(key=lambda x: -x[2])
+        best_i, best_j, _ = candidates[0]
+        new_segment = [L[best_i], L[best_i+1], L[best_j]]
+        L = L[:best_i] + new_segment + L[best_j+1:]
+        changed = True
     return L
 
+# ---------- 步骤3：添加#前缀 ----------
 def step3_add_hash(seq):
-    """增加索引校验，彻底解决越界问题"""
-    if len(seq) < 2:
-        return seq
+    """为不开放航路和与P点相邻的航路添加#前缀"""
     pts = seq[0::2]
     rts = seq[1::2]
+    m = len(rts)
+    def is_closed_route(rt):
+        return rt.startswith(('H', 'J', 'V'))
+    def is_p(pt):
+        base = base_name(pt)
+        return re.match(r'^P\d+$', base) is not None
     res = [pts[0]]
-
-    for i in range(len(rts)):
-        # 核心校验：确保左右点都存在
-        if i >= len(pts) - 1:
-            break
-        rt = rts[i]
+    for i, rt in enumerate(rts):
         left = pts[i]
         right = pts[i+1]
-
         need_hash = False
-        if rt.startswith(('H', 'J', 'V')):
+        if is_closed_route(rt):
             need_hash = True
-        elif is_p_point(left) or is_p_point(right):
+        elif is_p(left) or is_p(right):
             need_hash = True
-
         res.append('#' + rt if need_hash else rt)
         res.append(right)
     return res
 
-# ===================== Streamlit 界面（增加加载提示） =====================
+# ===================== Streamlit 界面 =====================
 st.title("✈️ 航路文本处理工具")
-st.caption("支持长文本批量处理，自动过滤无效数据")
 
-input_text = st.text_area(
-    "请输入待处理的航路文本：",
-    height=300,
-    placeholder="粘贴表格格式（带序号/坐标）或中文描述格式的航路数据..."
-)
+input_text = st.text_area("请输入待处理的航路文本：", height=200)
 
-# 长文本处理提示
-if len(input_text) > 1000:
-    st.info("检测到长文本，处理可能需要几秒钟，请耐心等待...")
-
-if st.button("开始处理", type="primary"):
-    with st.spinner("正在处理中..."):  # 加载动画，避免用户以为卡住
-        try:
-            seq, fmt = step1_extract(input_text)
-            if fmt == 'empty':
-                st.warning("请输入有效文本！")
-            else:
-                if fmt == 'table':
-                    seq = step2_reduce(seq)
-                seq = step3_add_hash(seq)
-                result = ' '.join(seq) if seq else "未提取到有效航路数据"
-                
-                st.success("✅ 处理完成！")
-                # 分栏显示结果，支持复制
-                col1, col2 = st.columns([8, 2])
-                with col1:
-                    st.text_area(
-                        "处理结果",
-                        value=result,
-                        height=200,
-                        disabled=False
-                    )
-                with col2:
-                    st.button("复制结果", on_click=lambda: st.session_state.update({'clipboard': result}))
-                    if 'clipboard' in st.session_state:
-                        st.success("已复制！")
-
-        except Exception as e:
-            st.error(f"❌ 处理失败: {str(e)}")
-            # 仅在调试时显示详细报错
-            with st.expander("查看详细错误（点击展开）"):
-                st.code(traceback.format_exc(), language="text")
+if st.button("开始处理"):
+    try:
+        seq, fmt = step1_extract(input_text)
+        if fmt == 'table':
+            seq = step2_reduce(seq)
+            seq = step3_add_hash(seq)
+        result = ' '.join(seq)
+        st.success("处理完成！")
+        # 修复：去掉了不支持的 key 参数
+        st.code(result, language="text")
+    except Exception as e:
+        st.error(f"处理失败: {e}")
+        st.code(traceback.format_exc(), language="text")
