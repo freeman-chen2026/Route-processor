@@ -223,17 +223,22 @@ def step2_reduce(seq):
 # ---------- 步骤3：添加#前缀（核心修复处） ----------
 def step3_add_hash(seq):
     """为不开放航路和与P点相邻的航路添加#前缀"""
+    # 边界处理：如果序列长度为1，直接返回
+    if len(seq) == 1:
+        return seq
+    
     pts = seq[0::2]
     rts = seq[1::2]
-    # 修复：限制循环i的范围为len(rts)，确保pts[i+1]有效（pts长度始终=rts长度+1）
-    m = len(rts)
+    
     def is_closed_route(rt):
         return rt.startswith(('H', 'J', 'V'))
+    
     def is_p(pt):
         base = base_name(pt)
         return re.match(r'^P\d+$', base) is not None
+    
     res = [pts[0]]
-    # 修复点：遍历rts时直接用for i, rt in enumerate(rts)即可，天然匹配有效索引
+    # 遍历rts，确保i+1永远小于pts长度
     for i, rt in enumerate(rts):
         left = pts[i]
         right = pts[i+1]
@@ -245,7 +250,6 @@ def step3_add_hash(seq):
         res.append('#' + rt if need_hash else rt)
         res.append(right)
     return res
-
 # ---------- 主程序 ----------
 def main():
     # 请在这里输入你的文本（支持多行字符串）
@@ -264,3 +268,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
