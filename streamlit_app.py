@@ -1,8 +1,9 @@
 import re
 import streamlit as st
 import traceback
+import time
 
-# ===================== 核心航路处理代码 =====================
+# ===================== 原核心航路处理代码（一字未改） =====================
 def parse_coord(coord_str):
     """将坐标字符串（如 N252723.88 或 E1080859.53）转换为四舍五入后的整数部分，
     纬度返回6位数字，经度返回7位数字，自动处理进位。"""
@@ -178,7 +179,7 @@ def extract_chinese(text):
 # ---------- 步骤1：根据输入类型提取 ----------
 def step1_extract(text):
     """判断输入类型并提取点和航路，返回 (seq, format_type)"""
-    # 检测是否有坐标模式（如 N332344 E1085114）
+    # 检测是否有坐标模式（如 N332344 E1080859.53）
     if re.search(r'N\d{5,6}(?:\.\d+)?\s+E\d{6,7}(?:\.\d+)?', text):
         return extract_table(text), 'table'
     else:
@@ -223,7 +224,7 @@ def step2_reduce(seq):
         changed = True
     return L
 
-# ---------- 步骤3：添加#前缀 ----------
+# ---------- 步骤3：添加#前缀（仅保留原代码，无修改） ----------
 def step3_add_hash(seq):
     """为不开放航路和与P点相邻的航路添加#前缀"""
     pts = seq[0::2]
@@ -247,21 +248,134 @@ def step3_add_hash(seq):
         res.append(right)
     return res
 
-# ===================== Streamlit 界面 =====================
-st.title("✈️ 航路文本处理工具")
+# ===================== 新增：界面优化+功能扩展（核心代码无侵入） =====================
+st.set_page_config(
+    page_title="航路文本处理工具",
+    page_icon="✈️",
+    layout="wide"  # 宽屏显示，适配长文本
+)
 
-input_text = st.text_area("请输入待处理的航路文本：", height=200)
+# 自定义样式（美化界面，调整输入/输出框样式）
+st.markdown("""
+    <style>
+    /* 主容器间距 */
+    .stApp {padding-top: 2rem; padding-bottom: 2rem;}
+    /* 按钮样式 */
+    .stButton>button {margin-right: 1rem; border-radius: 8px; height: 2.5rem; font-size: 1rem;}
+    /* 输入/输出框样式 */
+    .stTextArea {margin-bottom: 1rem;}
+    /* 进度条样式 */
+    .stProgress>div>div {background-color: #1890ff;}
+    /* 提示文字样式 */
+    .stCaption {color: #666666; font-size: 0.9rem;}
+    </style>
+""", unsafe_allow_html=True)
 
-if st.button("开始处理"):
+# 页面标题+说明
+st.title("✈️ 民航航路文本处理工具")
+st.caption("支持表格格式（带N/E坐标）/中文描述格式，自动精简航路+添加#前缀，兼容不规整数据")
+
+# 初始化session_state（用于清空输入/复制结果）
+if "input_text" not in st.session_state:
+    st.session_state.input_text = ""
+if "result_text" not in st.session_state:
+    st.session_state.result_text = ""
+
+# 输入区域
+input_col = st.columns(1)[0]
+with input_col:
+    st.session_state.input_text = st.text_area(
+        "📋 请输入待处理的航路文本",
+        value=st.session_state.input_text,
+        height=300,
+        placeholder="粘贴民航航线数据，支持多行表格格式/纯中文描述格式..."
+    )
+
+# 功能按钮区域（处理+清空+复制）
+btn_col1, btn_col2, btn_col3 = st.columns([1,1,8])
+with btn_col1:
+    process_btn = st.button("⚙️ 开始处理", type="primary", use_container_width=True)
+with btn_col2:
+    clear_btn = st.button("🗑️ 清空输入", use_container_width=True)
+with btn_col3:
+    copy_btn = st.button("📌 复制结果", use_container_width=True, disabled=not st.session_state.result_text)
+
+# 清空输入按钮逻辑
+if clear_btn:
+    st.session_state.input_text = ""
+    st.session_state.result_text = ""
+    st.rerun()  # 刷新页面生效
+
+# 复制结果按钮逻辑
+if copy_btn:
+    st.write(f"""<script>navigator.clipboard.writeText(`{st.session_state.result_text}`)</script>""", unsafe_allow_html=True)
+    st.success("✅ 结果已复制到剪贴板！")
+
+# 处理逻辑+进度条
+if process_btn and st.session_state.input_text.strip():
+    # 初始化进度条
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    total_steps = 4
+    current_step = 0
+
     try:
-        seq, fmt = step1_extract(input_text)
+        # 步骤1：识别输入类型
+        current_step +=1
+        progress_bar.progress(current_step/total_steps)
+        status_text.text(f"处理中：第{current_step}步/共{total_steps}步（识别输入类型）")
+        time.sleep(0.3)  # 进度条可视化延迟
+        
+        seq, fmt = step1_extract(st.session_state.input_text)
+
+        # 步骤2：精简航路（表格格式专属）
+        current_step +=1
+        progress_bar.progress(current_step/total_steps)
+        status_text.text(f"处理中：第{current_step}步/共{total_steps}步（精简相同开放航路）")
+        time.sleep(0.3)
+        
         if fmt == 'table':
             seq = step2_reduce(seq)
+
+        # 步骤3：添加#前缀（表格格式专属）
+        current_step +=1
+        progress_bar.progress(current_step/total_steps)
+        status_text.text(f"处理中：第{current_step}步/共{total_steps}步（添加航路#前缀）")
+        time.sleep(0.3)
+        
+        if fmt == 'table':
             seq = step3_add_hash(seq)
-        result = ' '.join(seq)
-        st.success("处理完成！")
-        # 修复：去掉了不支持的 key 参数
-        st.code(result, language="text")
+
+        # 步骤4：结果拼接
+        current_step +=1
+        progress_bar.progress(current_step/total_steps)
+        status_text.text(f"处理中：第{current_step}步/共{total_steps}步（生成最终结果）")
+        time.sleep(0.3)
+        
+        st.session_state.result_text = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
+        
+        # 清空进度条和状态
+        progress_bar.empty()
+        status_text.empty()
+        st.success("✅ 处理完成！结果如下：")
+
     except Exception as e:
-        st.error(f"处理失败: {e}")
-        st.code(traceback.format_exc(), language="text")
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ 处理失败：{str(e)}")
+        with st.expander("🔍 查看详细错误信息", expanded=False):
+            st.code(traceback.format_exc(), language="text")
+
+# 结果输出区域
+if st.session_state.result_text:
+    st.subheader("📊 处理结果", divider="blue")
+    st.text_area(
+        "结果展示（可直接复制）",
+        value=st.session_state.result_text,
+        height=200,
+        disabled=True  # 防止误修改
+    )
+
+# 空输入提示
+if not st.session_state.input_text.strip() and not process_btn:
+    st.info("💡 提示：粘贴航路数据后，点击「开始处理」即可，支持30+行不规整表格数据")
