@@ -1,7 +1,6 @@
 import re
 import streamlit as st
 import traceback
-import time
 
 # ===================== 原核心航路处理代码（一字未改） =====================
 def parse_coord(coord_str):
@@ -224,7 +223,7 @@ def step2_reduce(seq):
         changed = True
     return L
 
-# ---------- 步骤3：添加#前缀（仅保留原代码，无修改） ----------
+# ---------- 步骤3：添加#前缀 ----------
 def step3_add_hash(seq):
     """为不开放航路和与P点相邻的航路添加#前缀"""
     pts = seq[0::2]
@@ -248,72 +247,54 @@ def step3_add_hash(seq):
         res.append(right)
     return res
 
-# ===================== 新增：界面优化+功能扩展（核心代码无侵入） =====================
+# ===================== Streamlit 界面（优化版） =====================
 st.set_page_config(
     page_title="航路文本处理工具",
     page_icon="✈️",
-    layout="wide"  # 宽屏显示，适配长文本
+    layout="wide"
 )
 
-# 自定义样式（美化界面，调整输入/输出框样式）
+# 自定义样式（微调按钮间距等）
 st.markdown("""
     <style>
-    /* 主容器间距 */
     .stApp {padding-top: 2rem; padding-bottom: 2rem;}
-    /* 按钮样式 */
-    .stButton>button {margin-right: 1rem; border-radius: 8px; height: 2.5rem; font-size: 1rem;}
-    /* 输入/输出框样式 */
-    .stTextArea {margin-bottom: 1rem;}
-    /* 进度条样式 */
+    .stButton>button {border-radius: 8px; height: 2.5rem; font-size: 1rem;}
     .stProgress>div>div {background-color: #1890ff;}
-    /* 提示文字样式 */
     .stCaption {color: #666666; font-size: 0.9rem;}
     </style>
 """, unsafe_allow_html=True)
 
-# 页面标题+说明
 st.title("✈️ 民航航路文本处理工具")
 st.caption("支持表格格式（带N/E坐标）/中文描述格式，自动精简航路+添加#前缀，兼容不规整数据")
 
-# 初始化session_state（用于清空输入/复制结果）
-if "input_text" not in st.session_state:
-    st.session_state.input_text = ""
+# 初始化会话状态（确保清空按钮可用）
 if "result_text" not in st.session_state:
     st.session_state.result_text = ""
 
-# 输入区域
-input_col = st.columns(1)[0]
-with input_col:
-    st.session_state.input_text = st.text_area(
-        "📋 请输入待处理的航路文本",
-        value=st.session_state.input_text,
-        height=300,
-        placeholder="粘贴民航航线数据，支持多行表格格式/纯中文描述格式..."
-    )
+# 输入区域（使用 key 实现双向绑定）
+st.text_area(
+    "📋 请输入待处理的航路文本",
+    key="input_text",
+    height=300,
+    placeholder="粘贴民航航线数据，支持多行表格格式/纯中文描述格式..."
+)
 
-# 功能按钮区域（处理+清空+复制）
-btn_col1, btn_col2, btn_col3 = st.columns([1,1,8])
+# 按钮区域：调整列宽，适应窄屏
+btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 8])
 with btn_col1:
-    process_btn = st.button("⚙️ 开始处理", type="primary", use_container_width=True)
+    process_btn = st.button("⚙️ 处理", type="primary", use_container_width=True)
 with btn_col2:
-    clear_btn = st.button("🗑️ 清空输入", use_container_width=True)
-with btn_col3:
-    copy_btn = st.button("📌 复制结果", use_container_width=True, disabled=not st.session_state.result_text)
+    clear_btn = st.button("🗑️ 清空", use_container_width=True)
+# 第三列留空，或可放一些提示信息
 
-# 清空输入按钮逻辑
+# 清空按钮逻辑
 if clear_btn:
     st.session_state.input_text = ""
     st.session_state.result_text = ""
-    st.rerun()  # 刷新页面生效
+    st.rerun()
 
-# 复制结果按钮逻辑
-if copy_btn:
-    st.write(f"""<script>navigator.clipboard.writeText(`{st.session_state.result_text}`)</script>""", unsafe_allow_html=True)
-    st.success("✅ 结果已复制到剪贴板！")
-
-# 处理逻辑+进度条
+# 处理按钮逻辑
 if process_btn and st.session_state.input_text.strip():
-    # 初始化进度条
     progress_bar = st.progress(0)
     status_text = st.empty()
     total_steps = 4
@@ -321,40 +302,32 @@ if process_btn and st.session_state.input_text.strip():
 
     try:
         # 步骤1：识别输入类型
-        current_step +=1
-        progress_bar.progress(current_step/total_steps)
+        current_step += 1
+        progress_bar.progress(current_step / total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（识别输入类型）")
-        time.sleep(0.3)  # 进度条可视化延迟
-        
         seq, fmt = step1_extract(st.session_state.input_text)
 
         # 步骤2：精简航路（表格格式专属）
-        current_step +=1
-        progress_bar.progress(current_step/total_steps)
+        current_step += 1
+        progress_bar.progress(current_step / total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（精简相同开放航路）")
-        time.sleep(0.3)
-        
         if fmt == 'table':
             seq = step2_reduce(seq)
 
         # 步骤3：添加#前缀（表格格式专属）
-        current_step +=1
-        progress_bar.progress(current_step/total_steps)
+        current_step += 1
+        progress_bar.progress(current_step / total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（添加航路#前缀）")
-        time.sleep(0.3)
-        
         if fmt == 'table':
             seq = step3_add_hash(seq)
 
         # 步骤4：结果拼接
-        current_step +=1
-        progress_bar.progress(current_step/total_steps)
+        current_step += 1
+        progress_bar.progress(current_step / total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（生成最终结果）")
-        time.sleep(0.3)
-        
         st.session_state.result_text = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
-        
-        # 清空进度条和状态
+
+        # 清理进度条
         progress_bar.empty()
         status_text.empty()
         st.success("✅ 处理完成！结果如下：")
@@ -366,16 +339,11 @@ if process_btn and st.session_state.input_text.strip():
         with st.expander("🔍 查看详细错误信息", expanded=False):
             st.code(traceback.format_exc(), language="text")
 
-# 结果输出区域
+# 结果展示区域（使用 st.code 自带复制按钮）
 if st.session_state.result_text:
     st.subheader("📊 处理结果", divider="blue")
-    st.text_area(
-        "结果展示（可直接复制）",
-        value=st.session_state.result_text,
-        height=200,
-        disabled=True  # 防止误修改
-    )
+    st.code(st.session_state.result_text, language="text")
 
 # 空输入提示
-if not st.session_state.input_text.strip() and not process_btn:
+if not st.session_state.get("input_text", "").strip() and not process_btn:
     st.info("💡 提示：粘贴航路数据后，点击「开始处理」即可，支持30+行不规整表格数据")
