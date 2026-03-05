@@ -248,7 +248,7 @@ def step3_add_hash(seq):
         res.append(right)
     return res
 
-# ===================== 稳定版界面代码 =====================
+# ===================== 稳定版界面代码（无任何JavaScript） =====================
 st.set_page_config(
     page_title="航路文本处理工具",
     page_icon="✈️",
@@ -321,13 +321,10 @@ if clear_btn:
     st.session_state.result_text = ""
     st.rerun()
 
-# 复制结果按钮逻辑：使用原生Streamlit剪贴板API
+# 复制结果按钮逻辑：改为直接展示结果代码块，让用户手动全选复制
 if copy_btn:
-    try:
-        st.write(f"""<script>navigator.clipboard.writeText(`{st.session_state.result_text}`)</script>""", unsafe_allow_html=True)
-        st.success("✅ 结果已复制到剪贴板！")
-    except Exception as e:
-        st.error(f"❌ 复制失败：{str(e)}")
+    st.info("💡 请在下方代码块中全选并复制结果：")
+    st.code(st.session_state.result_text, language="text")
 
 # 处理逻辑+进度条
 if process_btn and st.session_state.input_text.strip():
