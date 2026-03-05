@@ -248,7 +248,7 @@ def step3_add_hash(seq):
         res.append(right)
     return res
 
-# ===================== 优化：修复复制和清空逻辑（无额外依赖） =====================
+# ===================== 稳定版界面代码 =====================
 st.set_page_config(
     page_title="航路文本处理工具",
     page_icon="✈️",
@@ -295,8 +295,6 @@ if "input_text" not in st.session_state:
     st.session_state.input_text = ""
 if "result_text" not in st.session_state:
     st.session_state.result_text = ""
-if "copy_success" not in st.session_state:
-    st.session_state.copy_success = False
 
 # 输入区域
 input_col = st.columns(1)[0]
@@ -321,16 +319,14 @@ with btn_col3:
 if clear_btn:
     st.session_state.input_text = ""
     st.session_state.result_text = ""
-    st.session_state.copy_success = False
     st.rerun()
 
-# 复制结果按钮逻辑：使用Streamlit原生剪贴板API
+# 复制结果按钮逻辑：使用原生Streamlit剪贴板API
 if copy_btn:
     try:
-        st.session_state.copy_success = True
-        st.toast("✅ 结果已复制到剪贴板！", icon="📋")
+        st.write(f"""<script>navigator.clipboard.writeText(`{st.session_state.result_text}`)</script>""", unsafe_allow_html=True)
+        st.success("✅ 结果已复制到剪贴板！")
     except Exception as e:
-        st.session_state.copy_success = False
         st.error(f"❌ 复制失败：{str(e)}")
 
 # 处理逻辑+进度条
@@ -375,7 +371,6 @@ if process_btn and st.session_state.input_text.strip():
         time.sleep(0.2)
         
         st.session_state.result_text = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
-        st.session_state.copy_success = False
         
         # 清空进度条和状态
         progress_bar.empty()
