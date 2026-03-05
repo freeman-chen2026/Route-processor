@@ -248,26 +248,41 @@ def step3_add_hash(seq):
         res.append(right)
     return res
 
-# ===================== 新增：界面优化+功能扩展（核心代码无侵入） =====================
+# ===================== 优化：界面适配平板 + 修复清空逻辑 =====================
 st.set_page_config(
     page_title="航路文本处理工具",
     page_icon="✈️",
-    layout="wide"  # 宽屏显示，适配长文本
+    layout="wide"
 )
 
-# 自定义样式（美化界面，调整输入/输出框样式）
+# 优化CSS，适配平板小屏幕
 st.markdown("""
     <style>
     /* 主容器间距 */
-    .stApp {padding-top: 2rem; padding-bottom: 2rem;}
-    /* 按钮样式 */
-    .stButton>button {margin-right: 1rem; border-radius: 8px; height: 2.5rem; font-size: 1rem;}
+    .stApp {padding-top: 1rem; padding-bottom: 1rem;}
+    /* 按钮样式：适配小屏幕，文字换行，内边距调整 */
+    .stButton>button {
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+        border-radius: 6px;
+        height: auto;
+        min-height: 2.5rem;
+        font-size: 0.9rem;
+        white-space: normal;
+        word-wrap: break-word;
+        padding: 0.5rem 0.8rem;
+    }
     /* 输入/输出框样式 */
-    .stTextArea {margin-bottom: 1rem;}
+    .stTextArea {margin-bottom: 0.8rem;}
     /* 进度条样式 */
     .stProgress>div>div {background-color: #1890ff;}
     /* 提示文字样式 */
-    .stCaption {color: #666666; font-size: 0.9rem;}
+    .stCaption {color: #666666; font-size: 0.85rem;}
+    /* 列布局在小屏幕上自动换行 */
+    .row-widget.stButton {
+        flex: 1 1 auto;
+        min-width: 120px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -275,7 +290,7 @@ st.markdown("""
 st.title("✈️ 民航航路文本处理工具")
 st.caption("支持表格格式（带N/E坐标）/中文描述格式，自动精简航路+添加#前缀，兼容不规整数据")
 
-# 初始化session_state（用于清空输入/复制结果）
+# 初始化session_state
 if "input_text" not in st.session_state:
     st.session_state.input_text = ""
 if "result_text" not in st.session_state:
@@ -287,12 +302,12 @@ with input_col:
     st.session_state.input_text = st.text_area(
         "📋 请输入待处理的航路文本",
         value=st.session_state.input_text,
-        height=300,
+        height=250,
         placeholder="粘贴民航航线数据，支持多行表格格式/纯中文描述格式..."
     )
 
-# 功能按钮区域（处理+清空+复制）
-btn_col1, btn_col2, btn_col3 = st.columns([1,1,8])
+# 功能按钮区域：使用更紧凑的布局，按钮文字更短
+btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 2])
 with btn_col1:
     process_btn = st.button("⚙️ 开始处理", type="primary", use_container_width=True)
 with btn_col2:
@@ -300,16 +315,16 @@ with btn_col2:
 with btn_col3:
     copy_btn = st.button("📌 复制结果", use_container_width=True, disabled=not st.session_state.result_text)
 
-# 清空输入按钮逻辑
+# 清空输入按钮逻辑：同时清空输入和输出
 if clear_btn:
     st.session_state.input_text = ""
     st.session_state.result_text = ""
-    st.rerun()  # 刷新页面生效
+    st.rerun()
 
-# 复制结果按钮逻辑
+# 复制结果按钮逻辑：使用更可靠的方式
 if copy_btn:
-    st.write(f"""<script>navigator.clipboard.writeText(`{st.session_state.result_text}`)</script>""", unsafe_allow_html=True)
-    st.success("✅ 结果已复制到剪贴板！")
+    st.code(st.session_state.result_text, language="text")
+    st.success("✅ 结果已展示，可直接全选复制！")
 
 # 处理逻辑+进度条
 if process_btn and st.session_state.input_text.strip():
@@ -324,7 +339,7 @@ if process_btn and st.session_state.input_text.strip():
         current_step +=1
         progress_bar.progress(current_step/total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（识别输入类型）")
-        time.sleep(0.3)  # 进度条可视化延迟
+        time.sleep(0.2)
         
         seq, fmt = step1_extract(st.session_state.input_text)
 
@@ -332,7 +347,7 @@ if process_btn and st.session_state.input_text.strip():
         current_step +=1
         progress_bar.progress(current_step/total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（精简相同开放航路）")
-        time.sleep(0.3)
+        time.sleep(0.2)
         
         if fmt == 'table':
             seq = step2_reduce(seq)
@@ -341,7 +356,7 @@ if process_btn and st.session_state.input_text.strip():
         current_step +=1
         progress_bar.progress(current_step/total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（添加航路#前缀）")
-        time.sleep(0.3)
+        time.sleep(0.2)
         
         if fmt == 'table':
             seq = step3_add_hash(seq)
@@ -350,7 +365,7 @@ if process_btn and st.session_state.input_text.strip():
         current_step +=1
         progress_bar.progress(current_step/total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（生成最终结果）")
-        time.sleep(0.3)
+        time.sleep(0.2)
         
         st.session_state.result_text = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
         
@@ -372,8 +387,8 @@ if st.session_state.result_text:
     st.text_area(
         "结果展示（可直接复制）",
         value=st.session_state.result_text,
-        height=200,
-        disabled=True  # 防止误修改
+        height=150,
+        disabled=True
     )
 
 # 空输入提示
