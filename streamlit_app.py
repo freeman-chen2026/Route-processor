@@ -315,7 +315,7 @@ with btn_col2:
 with btn_col3:
     copy_btn = st.button("📌 复制结果", use_container_width=True, disabled=not st.session_state.result_text)
 
-# 清空输入按钮逻辑：同时清空输入和输出
+# 清空输入按钮逻辑：同时清空输入和输出，并强制刷新
 if clear_btn:
     st.session_state.input_text = ""
     st.session_state.result_text = ""
