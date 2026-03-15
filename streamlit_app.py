@@ -82,6 +82,7 @@ def extract_table(text):
             start_idx = i
             break
     tokens = tokens[start_idx:]
+
     # 按序号分组
     lines = []
     i = 0
@@ -93,6 +94,7 @@ def extract_table(text):
                 line.append(tokens[i])
                 i += 1
             lines.append(line)
+
     points = []
     routes = []
     for line in lines:
@@ -109,12 +111,14 @@ def extract_table(text):
             continue
         lat_str = line[lat_idx]
         lon_str = line[lon_idx]
+
         # 航路（经度之后的下一个token）
         route = None
         if lon_idx + 1 < len(line):
             next_tok = line[lon_idx + 1]
             if re.match(r'^[A-Z][A-Z0-9]*$', next_tok) and not next_tok[0].isdigit():
                 route = next_tok
+
         # 从纬度之前向前找点名称
         point_name = None
         for j in range(lat_idx - 1, 0, -1):
@@ -124,6 +128,7 @@ def extract_table(text):
                 break
         if point_name is None:
             continue
+
         # 处理P点坐标
         if is_p_point(point_name):
             lat_int = parse_coord(lat_str)
@@ -131,9 +136,11 @@ def extract_table(text):
             point_display = f"{point_name}@{lat_int}N{lon_int}E"
         else:
             point_display = point_name
+
         points.append(point_display)
         if route is not None:
             routes.append(route)
+
     # 构建点-航路交替序列
     seq = []
     for i in range(len(points)):
@@ -229,11 +236,14 @@ def step3_add_hash(seq):
     pts = seq[0::2]
     rts = seq[1::2]
     m = len(rts)
+
     def is_closed_route(rt):
         return rt.startswith(('H', 'J', 'V'))
+
     def is_p(pt):
         base = base_name(pt)
         return re.match(r'^P\d+$', base) is not None
+
     res = [pts[0]]
     for i, rt in enumerate(rts):
         left = pts[i]
@@ -267,29 +277,31 @@ st.markdown("""
 st.title("✈️ 民航航路文本处理工具")
 st.caption("支持表格格式（带N/E坐标）/中文描述格式，自动精简航路+添加#前缀，兼容不规整数据")
 
-# 初始化会话状态（确保清空按钮可用）
+# 初始化会话状态
+if "last_processed_input" not in st.session_state:
+    st.session_state.last_processed_input = ""
 if "result_text" not in st.session_state:
     st.session_state.result_text = ""
 
-# 输入区域（使用 key 实现双向绑定）
-st.text_area(
+# 输入区域
+input_text = st.text_area(
     "📋 请输入待处理的航路文本",
     key="input_text",
     height=300,
     placeholder="粘贴民航航线数据，支持多行表格格式/纯中文描述格式..."
 )
 
-# 按钮区域：调整列宽，适应窄屏
+# 按钮区域
 btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 8])
 with btn_col1:
     process_btn = st.button("⚙️ 处理", type="primary", use_container_width=True)
 with btn_col2:
     clear_btn = st.button("🗑️ 清空", use_container_width=True)
-# 第三列留空，或可放一些提示信息
 
 # 清空按钮逻辑
 if clear_btn:
     st.session_state.input_text = ""
+    st.session_state.last_processed_input = ""
     st.session_state.result_text = ""
     st.rerun()
 
@@ -325,7 +337,11 @@ if process_btn and st.session_state.input_text.strip():
         current_step += 1
         progress_bar.progress(current_step / total_steps)
         status_text.text(f"处理中：第{current_step}步/共{total_steps}步（生成最终结果）")
-        st.session_state.result_text = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
+        result = ' '.join(seq) if seq else "⚠️ 未提取到有效航路数据"
+
+        # 保存处理结果和当前输入
+        st.session_state.result_text = result
+        st.session_state.last_processed_input = st.session_state.input_text
 
         # 清理进度条
         progress_bar.empty()
@@ -338,12 +354,25 @@ if process_btn and st.session_state.input_text.strip():
         st.error(f"❌ 处理失败：{str(e)}")
         with st.expander("🔍 查看详细错误信息", expanded=False):
             st.code(traceback.format_exc(), language="text")
+        # 失败时也更新最后处理的输入，使结果区域显示错误信息（但这里我们不保存结果，保持原有结果不变？）
+        # 为了清晰，失败时不清空结果，而是将错误信息显示在弹出层，结果区域保留旧结果，用户可根据警告判断
+        # 我们也可以选择清空结果，但考虑到失败后用户通常会修改输入，旧结果可能已无用，这里保留旧结果并显示警告即可
+        # 不做额外处理
 
-# 结果展示区域（使用 st.code 自带复制按钮）
+# 结果展示区域（根据输入是否变化显示不同提示）
 if st.session_state.result_text:
+    # 判断当前输入是否等于最后处理的输入
+    current_input = st.session_state.get("input_text", "")
+    last_input = st.session_state.last_processed_input
+
     st.subheader("📊 处理结果", divider="blue")
+
+    if current_input != last_input:
+        # 输入已变化，显示警告
+        st.warning("⚠️ 输入已更改，当前显示的是上一次处理的结果，如需更新请点击「处理」按钮。")
+
     st.code(st.session_state.result_text, language="text")
 
-# 空输入提示
-if not st.session_state.get("input_text", "").strip() and not process_btn:
-    st.info("💡 提示：粘贴航路数据后，点击「开始处理」即可，支持30+行不规整表格数据")
+# 空输入提示（仅当没有结果且输入为空时显示）
+if not st.session_state.result_text and not st.session_state.get("input_text", "").strip():
+    st.info("💡 提示：粘贴航路数据后，点击「处理」即可，支持30+行不规整表格数据")
