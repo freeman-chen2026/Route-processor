@@ -188,9 +188,7 @@ for ac in AIRCRAFT:
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
                     
                     # 飞机切换下拉框（每个计划一个）
-                    # 构建选项列表：当前飞机 + 其他飞机
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
-                    # 用当前飞机作为默认选中（index=0）
                     selected_ac = st.selectbox(
                         "✈️",
                         options,
@@ -212,10 +210,50 @@ for ac in AIRCRAFT:
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
-# ---------- 调机计划编辑区域（第三步，暂留空）----------
+# ---------- 调机计划编辑区域（第三步）----------
 st.markdown("---")
-st.markdown("### 🔄 调机计划管理（第三步）")
-st.info("调机计划编辑功能将在第三步添加")
+st.markdown("### 🔄 调机计划管理")
+
+ferry_plans = [p for p in st.session_state.plans if p.is_ferry]
+if ferry_plans:
+    # 每行显示3个调机计划
+    cols_per_row = 3
+    for i in range(0, len(ferry_plans), cols_per_row):
+        row_plans = ferry_plans[i:i+cols_per_row]
+        row_cols = st.columns(cols_per_row)
+        for col_idx, fp in enumerate(row_plans):
+            with row_cols[col_idx]:
+                with st.expander(f"调机 {fp.id} - {fp.aircraft} {fp.date} {fp.start}-{fp.end}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_start = st.text_input("起飞时间", fp.start, key=f"start_{fp.id}")
+                        new_dep = st.text_input("起飞机场", fp.dep_apt, key=f"dep_{fp.id}")
+                    with col2:
+                        new_end = st.text_input("落地时间", fp.end, key=f"end_{fp.id}")
+                        new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
+                    
+                    if st.button("更新", key=f"update_{fp.id}", width='stretch'):
+                        # 验证时间格式
+                        if not (re.match(r'^\d{2}:\d{2}$', new_start) and re.match(r'^\d{2}:\d{2}$', new_end)):
+                            st.error("时间格式错误，应为 HH:MM")
+                        else:
+                            # 检查时间是否有变动
+                            time_changed = (new_start != fp.start) or (new_end != fp.end)
+                            if time_changed:
+                                # 检查冲突（如果飞机不是N/A）
+                                if fp.aircraft != "N/A":
+                                    if check_conflict(st.session_state.plans, fp.aircraft, fp.date, new_start, new_end, exclude_id=fp.id):
+                                        st.error("时间冲突，更新失败")
+                                        st.stop()
+                            # 更新计划
+                            fp.start = new_start
+                            fp.end = new_end
+                            fp.dep_apt = new_dep
+                            fp.arr_apt = new_arr
+                            st.success("已更新")
+                            st.rerun()
+else:
+    st.info("暂无调机计划")
 
 # ---------- 底部 ----------
 with st.expander("📋 所有计划列表"):
@@ -230,4 +268,5 @@ with st.expander("📋 所有计划列表"):
     } for p in st.session_state.plans])
     st.dataframe(df, use_container_width=True)
 
-st.write("如果看到彩色计划块且每个下方有下拉框，说明第二步成功。")
+st.markdown("---")
+st.caption("📌 蓝色：载客计划 · 红色：调机计划（带F）· 每个计划下方可选飞机 · 调机计划可展开编辑")
