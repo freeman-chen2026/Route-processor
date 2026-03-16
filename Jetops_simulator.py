@@ -14,7 +14,7 @@ AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/
 # ---------- 动态生成日期（从今天开始，连续7天）----------
 today = datetime.now().date()
 date_objects = [today + timedelta(days=i) for i in range(7)]
-DATES = [d.strftime("%m-%d") for d in date_objects]  # 格式：MM-DD
+DATES = [d.strftime("%m-%d") for d in date_objects]          # 格式：MM-DD
 # 星期映射（英文转中文）
 weekday_map = {
     "Monday": "周一", "Tuesday": "周二", "Wednesday": "周三",
@@ -94,6 +94,63 @@ def plan_block_html(plan):
     </div>
     '''
 
+# ---------- 增强版OCR解析函数 ----------
+def parse_ocr_text(text):
+    """增强的OCR文本解析，支持多种格式，提取航班信息"""
+    lines = text.split('\n')
+    plans = []
+    
+    # 多种匹配模式（按优先级尝试）
+    patterns = [
+        # 模式1：飞机号 时间 机场1—机场2 （可能带F标记）
+        r'([A-Z0-9]+)\s+(\d{2}:\d{2})-(\d{2}:\d{2})\s+([^—\s]+)[—\-]([^\s]+)(?:\s*[Ff])?',
+        # 模式2：飞机号 时间 机场1-机场2 （带中文连接符）
+        r'([A-Z0-9]+)\s+(\d{2}:\d{2})-(\d{2}:\d{2})\s+([^-]+)-([^-\s]+)',
+        # 模式3：时间 飞机号 机场1-机场2 （时间在前）
+        r'(\d{2}:\d{2})-(\d{2}:\d{2})\s+([A-Z0-9]+)\s+([^-]+)-([^-\s]+)',
+        # 模式4：仅提取飞机号、时间、机场，忽略中间杂乱信息
+        r'([A-Z0-9]+).*?(\d{2}:\d{2})-(\d{2}:\d{2}).*?([^—\s]+)[—\-]([^\s]+)',
+    ]
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # 检测是否为调机计划（包含F标记）
+        is_ferry = 'F' in line or 'f' in line
+        
+        for pattern in patterns:
+            match = re.search(pattern, line)
+            if match:
+                groups = match.groups()
+                if len(groups) == 5:
+                    # 根据模式不同，组顺序可能不同，需要判断
+                    # 简单起见，我们假设模式1、2、4都是 [飞机, 开始, 结束, 出发, 到达]
+                    if pattern == patterns[2]:  # 模式3：时间在前
+                        start, end, aircraft, dep, arr = groups
+                    else:
+                        aircraft, start, end, dep, arr = groups
+                    
+                    # 清理机场名称（去除多余空格和符号）
+                    dep = re.sub(r'[^\w\u4e00-\u9fff]', '', dep)  # 保留中文、英文、数字
+                    arr = re.sub(r'[^\w\u4e00-\u9fff]', '', arr)
+                    
+                    # 检查飞机号是否在列表中，不在则放入N/A
+                    if aircraft not in AIRCRAFT:
+                        aircraft = "N/A"
+                    
+                    plans.append({
+                        'aircraft': aircraft,
+                        'start': start,
+                        'end': end,
+                        'dep': dep,
+                        'arr': arr,
+                        'is_ferry': is_ferry
+                    })
+                    break  # 找到匹配后跳出循环
+    return plans
+
 # ---------- 侧边栏（截图识别和手动添加）----------
 with st.sidebar:
     st.header("📸 截图识别")
@@ -106,29 +163,48 @@ with st.sidebar:
             try:
                 text = pytesseract.image_to_string(image, lang='eng')
                 st.write("OCR识别结果：", text)
-                # 简单解析（可后续完善）
-                st.warning("OCR解析功能待完善，请使用模拟模式")
+                parsed = parse_ocr_text(text)
+                for item in parsed:
+                    new_plan = FlightPlan(
+                        pid=get_next_id(),
+                        aircraft=item['aircraft'],
+                        date=DATES[0],          # 默认今天，实际可让用户选择
+                        start=item['start'],
+                        end=item['end'],
+                        dep_apt=item['dep'],
+                        arr_apt=item['arr'],
+                        is_ferry=item['is_ferry']
+                    )
+                    st.session_state.plans.append(new_plan)
+                st.success(f"OCR识别：已生成 {len(parsed)} 个计划")
             except Exception as e:
                 st.error(f"OCR失败：{e}")
         else:
-            # 模拟识别：生成两个测试计划放在N/A上，日期使用今天
+            # 模拟识别：生成多个测试计划，分配到不同飞机
             mock_plans = [
-                ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都"),
-                ("B652R", "11:50", "14:00", "越南金兰", "吉隆坡"),
+                ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都", False),
+                ("B652Q", "17:00", "20:50", "日本东京羽田", "天津滨海", False),
+                ("B652R", "11:50", "14:00", "越南金兰", "吉隆坡", True),
+                ("B652R", "07:30", "11:45", "香港", "孟加拉达卡", False),
+                ("N440QS", "09:00", "11:00", "郑州新郑", "上海虹桥", False),
+                ("N440QS", "16:00", "18:05", "台中清泉岗", "香港", True),
+                ("MLLIN", "08:45", "10:30", "柬埔寨金边", "新加坡", True),
+                ("MLLIN", "12:30", "15:55", "新加坡", "香港", False),
             ]
-            for ac, s, e, dep, arr in mock_plans:
+            for ac, s, e, dep, arr, ferry in mock_plans:
+                target_ac = ac if ac in AIRCRAFT else "N/A"
                 new_plan = FlightPlan(
                     pid=get_next_id(),
-                    aircraft="N/A",  # 先放在N/A
-                    date=DATES[0],   # 使用今天日期
+                    aircraft=target_ac,
+                    date=DATES[0],
                     start=s,
                     end=e,
                     dep_apt=dep,
                     arr_apt=arr,
-                    is_ferry=False
+                    is_ferry=ferry
                 )
                 st.session_state.plans.append(new_plan)
-            st.success("模拟识别：已添加2个测试计划到N/A（今天日期）")
+            st.success(f"模拟识别：已添加 {len(mock_plans)} 个测试计划")
 
     st.header("➕ 手动添加计划")
     with st.form("add_plan_form"):
@@ -173,7 +249,7 @@ with st.sidebar:
     confirm_clear = st.checkbox("确认清空所有计划（不可恢复）")
     if st.button("清空计划", width='stretch', disabled=not confirm_clear):
         st.session_state.plans = []
-        st.session_state.id_counter = 1000  # 重置ID计数器（可选）
+        st.session_state.id_counter = 1000  # 重置ID计数器
         st.success("所有计划已清空")
         st.rerun()
 
@@ -281,4 +357,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 日期从今天开始动态更新。示例计划使用固定日期，可能不在当前显示范围内，请手动添加新计划体验。")
+st.caption("📌 日期从今天开始动态更新。模拟识别生成了8个测试计划，分散在不同飞机上。")
