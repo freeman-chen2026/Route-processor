@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import re
+from PIL import Image
+import pytesseract
+import io
 
 st.set_page_config(layout="wide", page_title="公务机飞行计划")
 
@@ -10,7 +14,11 @@ AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/
 DATES = ["03-15", "03-16", "03-17", "03-18", "03-19", "03-20", "03-21"]
 DATE_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
 
-# ---------- 计划数据（和之前一样）----------
+# 用于生成唯一ID
+if 'id_counter' not in st.session_state:
+    st.session_state.id_counter = 1000
+
+# ---------- 数据结构 ----------
 class FlightPlan:
     def __init__(self, pid, aircraft, date, start, end, dep_apt, arr_apt, is_ferry=False):
         self.id = pid
@@ -22,6 +30,7 @@ class FlightPlan:
         self.arr_apt = arr_apt
         self.is_ferry = is_ferry
 
+# 初始化计划列表
 if 'plans' not in st.session_state:
     st.session_state.plans = [
         FlightPlan(1, "B652Q", "03-15", "07:00", "09:00", "韩国首尔金浦", "北京首都"),
@@ -35,8 +44,30 @@ if 'plans' not in st.session_state:
         FlightPlan(9, "N440QS", "03-16", "16:00", "18:05", "越南金兰", "台中清泉岗", is_ferry=True),
     ]
 
-# 辅助函数：生成计划块的 HTML（确保标签正确闭合）
+# ---------- 辅助函数 ----------
+def get_next_id():
+    st.session_state.id_counter += 1
+    return st.session_state.id_counter
+
+def time_to_minutes(t):
+    """HH:MM 转换为分钟数"""
+    h, m = map(int, t.split(':'))
+    return h*60 + m
+
+def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
+    """检查指定飞机在指定日期时间段是否有冲突（排除自己）"""
+    start_m = time_to_minutes(start)
+    end_m = time_to_minutes(end)
+    for p in plans:
+        if p.aircraft == aircraft and p.date == date and p.id != exclude_id:
+            p_start = time_to_minutes(p.start)
+            p_end = time_to_minutes(p.end)
+            if not (end_m <= p_start or start_m >= p_end):
+                return True
+    return False
+
 def plan_block_html(plan):
+    """生成计划块的HTML（确保标签正确闭合）"""
     color = "#ffebee" if plan.is_ferry else "#e3f2fd"
     border_color = "#f44336" if plan.is_ferry else "#2196f3"
     f_tag = '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if plan.is_ferry else ''
@@ -55,11 +86,85 @@ def plan_block_html(plan):
     </div>
     '''
 
-# ---------- 构建日历网格 ----------
+# ---------- 侧边栏（截图识别和手动添加）----------
+with st.sidebar:
+    st.header("📸 截图识别")
+    uploaded_file = st.file_uploader("上传航班计划截图", type=['png','jpg','jpeg'])
+    use_mock = st.checkbox("使用模拟识别（不依赖OCR）", value=True)
+    
+    if st.button("识别并生成计划", width='stretch'):
+        if uploaded_file is not None and not use_mock:
+            image = Image.open(uploaded_file)
+            try:
+                text = pytesseract.image_to_string(image, lang='eng')
+                st.write("OCR识别结果：", text)
+                # 简单解析（可后续完善）
+                st.warning("OCR解析功能待完善，请使用模拟模式")
+            except Exception as e:
+                st.error(f"OCR失败：{e}")
+        else:
+            # 模拟识别：生成两个测试计划放在N/A上
+            mock_plans = [
+                ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都"),
+                ("B652R", "11:50", "14:00", "越南金兰", "吉隆坡"),
+            ]
+            for ac, s, e, dep, arr in mock_plans:
+                new_plan = FlightPlan(
+                    pid=get_next_id(),
+                    aircraft="N/A",  # 先放在N/A
+                    date=DATES[0],
+                    start=s,
+                    end=e,
+                    dep_apt=dep,
+                    arr_apt=arr,
+                    is_ferry=False
+                )
+                st.session_state.plans.append(new_plan)
+            st.success("模拟识别：已添加2个测试计划到N/A")
+
+    st.header("➕ 手动添加计划")
+    with st.form("add_plan_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            ac = st.selectbox("飞机", AIRCRAFT, index=7)  # 默认N/A
+            date_idx = st.selectbox("日期", range(7), format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}")
+            start = st.text_input("起飞时间 (HH:MM)", "08:00")
+            dep = st.text_input("起飞机场", "北京首都")
+        with col2:
+            is_ferry = st.checkbox("调机计划 (红色F)")
+            end = st.text_input("落地时间 (HH:MM)", "10:00")
+            arr = st.text_input("落地机场", "上海虹桥")
+        
+        submitted = st.form_submit_button("添加计划", width='stretch')
+        if submitted:
+            if re.match(r'^\d{2}:\d{2}$', start) and re.match(r'^\d{2}:\d{2}$', end):
+                new_plan = FlightPlan(
+                    pid=get_next_id(),
+                    aircraft=ac,
+                    date=DATES[date_idx],
+                    start=start,
+                    end=end,
+                    dep_apt=dep,
+                    arr_apt=arr,
+                    is_ferry=is_ferry
+                )
+                if ac != "N/A":
+                    if check_conflict(st.session_state.plans, ac, DATES[date_idx], start, end):
+                        st.error("该时间段已有计划，添加失败")
+                    else:
+                        st.session_state.plans.append(new_plan)
+                        st.success("计划添加成功")
+                else:
+                    st.session_state.plans.append(new_plan)
+                    st.success("计划添加成功 (N/A)")
+            else:
+                st.error("时间格式错误")
+
+# ---------- 日历网格 ----------
 st.write("## 飞行计划日历")
 
 # 第一行：日期标题
-cols = st.columns([1] + [1]*len(DATES))  # 第一列宽一点放飞机名
+cols = st.columns([1] + [1]*len(DATES))
 with cols[0]:
     st.markdown("**飞机/日期**")
 for i, label in enumerate(DATE_LABELS):
@@ -79,8 +184,50 @@ for ac in AIRCRAFT:
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
+                    # 显示计划块
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
+                    
+                    # 飞机切换下拉框（每个计划一个）
+                    # 构建选项列表：当前飞机 + 其他飞机
+                    options = [ac] + [a for a in AIRCRAFT if a != ac]
+                    # 用当前飞机作为默认选中（index=0）
+                    selected_ac = st.selectbox(
+                        "✈️",
+                        options,
+                        index=0,
+                        key=f"move_{p.id}",
+                        label_visibility="collapsed"
+                    )
+                    if selected_ac != ac:
+                        # 检查冲突（如果目标不是N/A）
+                        conflict = False
+                        if selected_ac != "N/A":
+                            conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
+                        if conflict:
+                            st.error(f"时间冲突，不能移动到 {selected_ac}")
+                        else:
+                            # 更新飞机
+                            p.aircraft = selected_ac
+                            st.rerun()
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
-st.write("如果看到彩色计划块且排列整齐，说明日历网格渲染成功。")
+# ---------- 调机计划编辑区域（第三步，暂留空）----------
+st.markdown("---")
+st.markdown("### 🔄 调机计划管理（第三步）")
+st.info("调机计划编辑功能将在第三步添加")
+
+# ---------- 底部 ----------
+with st.expander("📋 所有计划列表"):
+    df = pd.DataFrame([{
+        "飞机": p.aircraft,
+        "日期": p.date,
+        "起飞": p.start,
+        "落地": p.end,
+        "起飞机场": p.dep_apt,
+        "落地机场": p.arr_apt,
+        "调机": p.is_ferry
+    } for p in st.session_state.plans])
+    st.dataframe(df, use_container_width=True)
+
+st.write("如果看到彩色计划块且每个下方有下拉框，说明第二步成功。")
