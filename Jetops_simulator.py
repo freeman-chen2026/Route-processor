@@ -112,47 +112,6 @@ AIRPORT_MAP = {
     "ZSYY": "烟台",
     "ZSZJ": "湛江",
     "ZSZS": "舟山普陀山",
-    "ZHHH": "武汉天河",
-    "ZGHA": "长沙黄花",
-    "ZSCN": "南昌昌北",
-    "ZSFZ": "福州长乐",
-    "ZSAM": "厦门高崎",
-    "ZGSZ": "深圳宝安",
-    "ZGKL": "桂林两江",
-    "ZJHK": "海口美兰",
-    "ZJQH": "琼海博鳌",
-    "ZJSY": "三亚凤凰",
-    "ZWWW": "乌鲁木齐地窝堡",
-    "ZLLL": "兰州中川",
-    "ZLXY": "西安咸阳",
-    "ZLIC": "银川河东",
-    "ZLHZ": "汉中城固",
-    "ZLXN": "西宁曹家堡",
-    "ZULS": "拉萨贡嘎",
-    "ZPPP": "昆明长水",
-    "ZUCK": "重庆江北",
-    "ZUUU": "成都双流",
-    "ZUMY": "绵阳南郊",
-    "ZUWX": "无锡硕放",
-    "ZSNB": "宁波栎社",
-    "ZSNJ": "南京禄口",
-    "ZSOF": "合肥新桥",
-    "ZSQD": "青岛胶东",
-    "ZSYN": "盐城南洋",
-    "ZSYT": "烟台蓬莱",
-    "ZSJG": "济宁曲阜",
-    "ZSLG": "连云港白塔埠",
-    "ZSPD": "上海浦东",
-    "ZSSS": "上海虹桥",
-    "ZSTX": "黄山屯溪",
-    "ZSWZ": "温州龙湾",
-    "ZSXZ": "徐州观音",
-    "ZSYW": "义乌",
-    "ZSYN": "盐城",
-    "ZSYC": "宜春明月山",
-    "ZSYY": "烟台",
-    "ZSZJ": "湛江",
-    "ZSZS": "舟山普陀山",
 }
 
 # 用于生成唯一ID
@@ -415,7 +374,7 @@ with st.sidebar:
         st.success("所有计划已清空")
         st.rerun()
 
-# ---------- 日历网格（带隐藏调机计划功能）----------
+# ---------- 日历网格（带隐藏调机计划功能和飞机切换）----------
 st.write("## 飞行计划日历")
 
 # 隐藏调机计划复选框
@@ -475,17 +434,30 @@ for ac in AIRCRAFT:
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
+                    # 显示计划块
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    # 飞机切换下拉框（演示功能，禁用）
+                    
+                    # 飞机切换下拉框（启用）
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
-                    st.selectbox(
+                    selected_ac = st.selectbox(
                         "✈️",
                         options,
                         index=0,
                         key=f"move_{p.id}",
-                        label_visibility="collapsed",
-                        disabled=True
+                        label_visibility="collapsed"
                     )
+                    # 如果用户选择了不同的飞机
+                    if selected_ac != ac:
+                        # 检查目标飞机是否有冲突（排除自身）
+                        conflict = False
+                        if selected_ac != "N/A":
+                            conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
+                        if conflict:
+                            st.error(f"时间冲突，不能移动到 {selected_ac}")
+                        else:
+                            # 更新计划所属飞机
+                            p.aircraft = selected_ac
+                            st.rerun()
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
@@ -542,4 +514,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。")
+st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。")
