@@ -77,45 +77,61 @@ def plan_block_html(plan):
     </div>
     '''
 
+def parse_cell_text(text):
+    """解析单元格内多行计划文本，返回计划字典列表"""
+    lines = text.strip().split('\n')
+    plans = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        is_ferry = 'F' in line
+        line_clean = line.replace('F', '').strip()
+        pattern = r'(\d{2}:\d{2})-(\d{2}:\d{2})\s+([^-]+)-(.+)'
+        match = re.search(pattern, line_clean)
+        if match:
+            start = match.group(1)
+            end = match.group(2)
+            dep = match.group(3).strip()
+            arr = match.group(4).strip()
+            plans.append({
+                'start': start,
+                'end': end,
+                'dep': dep,
+                'arr': arr,
+                'is_ferry': is_ferry
+            })
+    return plans
+
 def parse_excel(df):
     """从DataFrame解析计划，返回候选计划列表"""
     candidates = []
-    required_cols = ['飞机注册号', '用途', '出发日期', '计划出发', '出发地', '到达地']
-    # 检查必要列是否存在（可能有别名，这里简化）
+    # 检查必要列是否存在（根据实际样本调整列名）
+    required_cols = ['飞机注册号', '用途', '出发日期', '计划出发', '预计到达', '出发地', '到达地']
     if not all(col in df.columns for col in required_cols):
-        st.error("Excel文件缺少必要列，请确保包含：飞机注册号、用途、出发日期、计划出发、出发地、到达地")
+        st.error("Excel文件缺少必要列，请确保包含：飞机注册号、用途、出发日期、计划出发、预计到达、出发地、到达地")
         return candidates
     
     for idx, row in df.iterrows():
         ac = row['飞机注册号']
         if ac not in AIRCRAFT:
-            ac = "N/A"  # 不在列表中的飞机放入N/A
+            ac = "N/A"
         
-        # 解析日期
         try:
             date_obj = pd.to_datetime(row['出发日期']).date()
             date_str = date_obj.strftime("%m-%d")
         except:
-            continue  # 日期无效则跳过
+            continue
         
-        # 解析时间
         try:
             start = pd.to_datetime(row['计划出发']).strftime("%H:%M")
         except:
             start = str(row['计划出发']).strip()
         
-        # 注意：Excel中没有计划到达时间，只有出发日期和计划出发，需要根据实际飞行时间推算？用户提供的Excel中有“预计到达”列，但不在required_cols里。为简化，我们假设计划中包含了到达时间？从样本看，每个行程都有“预计到达”列（格式HH:MM）。所以需要添加。
-        # 为了准确，我们应包含“预计到达”列。让我们重新定义必要列。
-        # 实际上样本中有“预计到达”列。我们更新列检查。
-        if '预计到达' in df.columns:
-            try:
-                end = pd.to_datetime(row['预计到达']).strftime("%H:%M")
-            except:
-                end = str(row['预计到达']).strip()
-        else:
-            # 如果没有，跳过或设为默认？最好提示。
-            st.warning("缺少预计到达列，跳过该行")
-            continue
+        try:
+            end = pd.to_datetime(row['预计到达']).strftime("%H:%M")
+        except:
+            end = str(row['预计到达']).strip()
         
         dep = str(row['出发地']).strip()
         arr = str(row['到达地']).strip()
@@ -124,7 +140,6 @@ def parse_excel(df):
         candidates.append({
             'aircraft': ac,
             'date_original': date_str,
-            'date_idx': None,  # 稍后映射
             'start': start,
             'end': end,
             'dep': dep,
@@ -149,8 +164,33 @@ with st.sidebar:
         )
         
         if st.button("添加到单元格", width='stretch'):
-            # 解析函数略（同前，此处省略，实际应有）
-            st.info("手动添加功能保留，请根据需要自行填写")
+            plans_to_add = parse_cell_text(cell_text)
+            if not plans_to_add:
+                st.warning("未解析到任何计划，请检查格式")
+            else:
+                conflicts = []
+                added = 0
+                for item in plans_to_add:
+                    if check_conflict(st.session_state.plans, selected_aircraft, target_date, item['start'], item['end']):
+                        conflicts.append(f"{item['start']}-{item['end']}")
+                    else:
+                        new_plan = FlightPlan(
+                            pid=get_next_id(),
+                            aircraft=selected_aircraft,
+                            date=target_date,
+                            start=item['start'],
+                            end=item['end'],
+                            dep_apt=item['dep'],
+                            arr_apt=item['arr'],
+                            is_ferry=item['is_ferry']
+                        )
+                        st.session_state.plans.append(new_plan)
+                        added += 1
+                if conflicts:
+                    st.error(f"以下计划时间冲突，未添加：{', '.join(conflicts)}")
+                if added > 0:
+                    st.success(f"成功添加 {added} 个计划到 {selected_aircraft} {DATE_LABELS[selected_col]} {target_date}")
+                    st.rerun()
 
     st.markdown("---")
     st.header("📊 上传Excel自动解析")
@@ -171,16 +211,11 @@ with st.sidebar:
         except Exception as e:
             st.error(f"读取Excel失败：{e}")
     
-    # 显示候选计划预览和导入界面
     if 'excel_candidates' in st.session_state and st.session_state['excel_candidates']:
         st.markdown("#### 待导入计划预览")
-        # 为每个候选计划添加日期选择（映射到日历中的日期列）
         data = []
         for idx, cand in enumerate(st.session_state['excel_candidates']):
-            # 尝试将原始日期映射到DATES中的索引
             try:
-                orig_date = datetime.strptime(cand['date_original'], "%m-%d").date()
-                # 查找在DATES中是否存在
                 if cand['date_original'] in DATES:
                     default_idx = DATES.index(cand['date_original'])
                 else:
@@ -188,7 +223,6 @@ with st.sidebar:
             except:
                 default_idx = 0
             
-            # 显示一行，带复选框和日期选择
             row_data = {
                 "选择": True,
                 "飞机": cand['aircraft'],
@@ -221,7 +255,6 @@ with st.sidebar:
                 selected_date_idx = st.session_state[f"excel_date_{idx}"]
                 target_date = DATES[selected_date_idx]
                 cand = st.session_state['excel_candidates'][idx]
-                # 检查冲突
                 if check_conflict(st.session_state.plans, cand['aircraft'], target_date, cand['start'], cand['end']):
                     conflicts.append(f"{cand['aircraft']} {cand['start']}-{cand['end']} {cand['dep']}-{cand['arr']}")
                 else:
@@ -241,7 +274,6 @@ with st.sidebar:
                 st.error(f"以下计划冲突，未添加：{', '.join(conflicts)}")
             if added > 0:
                 st.success(f"成功添加 {added} 个计划")
-                # 清空候选列表，避免重复添加
                 del st.session_state['excel_candidates']
                 st.rerun()
 
@@ -335,7 +367,6 @@ for ac in AIRCRAFT:
             if day_plans:
                 for p in day_plans:
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    # 飞机切换下拉框（演示功能，可禁用）
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
                     st.selectbox(
                         "✈️",
