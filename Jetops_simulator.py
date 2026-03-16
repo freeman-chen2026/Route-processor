@@ -11,13 +11,149 @@ AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/
 # ---------- 动态生成日期（从今天开始，连续7天）----------
 today = datetime.now().date()
 date_objects = [today + timedelta(days=i) for i in range(7)]
-DATES = [d.strftime("%m-%d") for d in date_objects]          # 格式：MM-DD
-# 星期映射（英文转中文）
+DATES = [d.strftime("%m-%d") for d in date_objects]
 weekday_map = {
     "Monday": "周一", "Tuesday": "周二", "Wednesday": "周三",
     "Thursday": "周四", "Friday": "周五", "Saturday": "周六", "Sunday": "周日"
 }
 DATE_LABELS = [weekday_map[d.strftime("%A")] for d in date_objects]
+
+# 机场四字码 -> 中文名称映射（可扩展）
+AIRPORT_MAP = {
+    "VDTI": "柬埔寨金边德崇",
+    "WSSL": "新加坡实里达",
+    "VVCR": "越南金兰",
+    "WMSA": "马来西亚吉隆坡梳邦",
+    "VHHH": "香港",
+    "ZSHC": "杭州萧山",
+    "ZSSS": "上海虹桥",
+    "ZBAA": "北京首都",
+    "RJTT": "日本东京羽田",
+    "ZBTJ": "天津滨海",
+    "VTSP": "泰国普吉",
+    "VLVT": "老挝万象",
+    "ZUCK": "重庆江北",
+    "ZGSZ": "深圳宝安",
+    "VMMC": "澳门",
+    "VVTS": "越南胡志明市",
+    "RCMQ": "台中清泉岗",
+    "RPLL": "菲律宾马尼拉",
+    "ZGGG": "广州白云",
+    "ZSQZ": "泉州晋江",
+    "ZSPD": "上海浦东",
+    "PANC": "美国安克雷奇史蒂文斯",
+    "KSFO": "美国旧金山",
+    "NZQN": "新西兰皇后镇",
+    "WAMM": "印尼万鸦老",
+    "WAMP": "印尼莫罗瓦利工业园",
+    "WAEH": "印尼韦达港",
+    "VTCC": "泰国清迈",
+    "ZHCC": "郑州新郑",
+    "ZJSY": "三亚凤凰",
+    "ZSNB": "宁波栎社",
+    "ZBAD": "北京大兴",
+    "ZGNN": "南宁吴圩",
+    "ZPPP": "昆明长水",
+    "ZUUU": "成都双流",
+    "ZUCK": "重庆江北",
+    "ZGSZ": "深圳宝安",
+    "ZGGG": "广州白云",
+    "ZSHC": "杭州萧山",
+    "ZSNJ": "南京禄口",
+    "ZSOF": "合肥新桥",
+    "ZSQD": "青岛胶东",
+    "ZSYT": "烟台蓬莱",
+    "ZBTJ": "天津滨海",
+    "ZBSJ": "石家庄正定",
+    "ZBYN": "太原武宿",
+    "ZBCF": "长春龙嘉",
+    "ZYHB": "哈尔滨太平",
+    "ZYTL": "大连周水子",
+    "ZYJM": "佳木斯东郊",
+    "ZYTX": "沈阳桃仙",
+    "ZHHH": "武汉天河",
+    "ZGHA": "长沙黄花",
+    "ZSCN": "南昌昌北",
+    "ZSFZ": "福州长乐",
+    "ZSAM": "厦门高崎",
+    "ZGSZ": "深圳宝安",
+    "ZGKL": "桂林两江",
+    "ZJHK": "海口美兰",
+    "ZJQH": "琼海博鳌",
+    "ZJSY": "三亚凤凰",
+    "ZWWW": "乌鲁木齐地窝堡",
+    "ZLLL": "兰州中川",
+    "ZLXY": "西安咸阳",
+    "ZLIC": "银川河东",
+    "ZLHZ": "汉中城固",
+    "ZLXN": "西宁曹家堡",
+    "ZULS": "拉萨贡嘎",
+    "ZPPP": "昆明长水",
+    "ZUCK": "重庆江北",
+    "ZUUU": "成都双流",
+    "ZUMY": "绵阳南郊",
+    "ZUWX": "无锡硕放",
+    "ZSNB": "宁波栎社",
+    "ZSNJ": "南京禄口",
+    "ZSOF": "合肥新桥",
+    "ZSQD": "青岛胶东",
+    "ZSYN": "盐城南洋",
+    "ZSYT": "烟台蓬莱",
+    "ZSJG": "济宁曲阜",
+    "ZSLG": "连云港白塔埠",
+    "ZSPD": "上海浦东",
+    "ZSSS": "上海虹桥",
+    "ZSTX": "黄山屯溪",
+    "ZSWZ": "温州龙湾",
+    "ZSXZ": "徐州观音",
+    "ZSYW": "义乌",
+    "ZSYN": "盐城",
+    "ZSYC": "宜春明月山",
+    "ZSYY": "烟台",
+    "ZSZJ": "湛江",
+    "ZSZS": "舟山普陀山",
+    "ZHHH": "武汉天河",
+    "ZGHA": "长沙黄花",
+    "ZSCN": "南昌昌北",
+    "ZSFZ": "福州长乐",
+    "ZSAM": "厦门高崎",
+    "ZGSZ": "深圳宝安",
+    "ZGKL": "桂林两江",
+    "ZJHK": "海口美兰",
+    "ZJQH": "琼海博鳌",
+    "ZJSY": "三亚凤凰",
+    "ZWWW": "乌鲁木齐地窝堡",
+    "ZLLL": "兰州中川",
+    "ZLXY": "西安咸阳",
+    "ZLIC": "银川河东",
+    "ZLHZ": "汉中城固",
+    "ZLXN": "西宁曹家堡",
+    "ZULS": "拉萨贡嘎",
+    "ZPPP": "昆明长水",
+    "ZUCK": "重庆江北",
+    "ZUUU": "成都双流",
+    "ZUMY": "绵阳南郊",
+    "ZUWX": "无锡硕放",
+    "ZSNB": "宁波栎社",
+    "ZSNJ": "南京禄口",
+    "ZSOF": "合肥新桥",
+    "ZSQD": "青岛胶东",
+    "ZSYN": "盐城南洋",
+    "ZSYT": "烟台蓬莱",
+    "ZSJG": "济宁曲阜",
+    "ZSLG": "连云港白塔埠",
+    "ZSPD": "上海浦东",
+    "ZSSS": "上海虹桥",
+    "ZSTX": "黄山屯溪",
+    "ZSWZ": "温州龙湾",
+    "ZSXZ": "徐州观音",
+    "ZSYW": "义乌",
+    "ZSYN": "盐城",
+    "ZSYC": "宜春明月山",
+    "ZSYY": "烟台",
+    "ZSZJ": "湛江",
+    "ZSZS": "舟山普陀山",
+}
 
 # 用于生成唯一ID
 if 'id_counter' not in st.session_state:
@@ -77,32 +213,6 @@ def plan_block_html(plan):
     </div>
     '''
 
-def parse_cell_text(text):
-    """解析单元格内多行计划文本，返回计划字典列表"""
-    lines = text.strip().split('\n')
-    plans = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        is_ferry = 'F' in line
-        line_clean = line.replace('F', '').strip()
-        pattern = r'(\d{2}:\d{2})-(\d{2}:\d{2})\s+([^-]+)-(.+)'
-        match = re.search(pattern, line_clean)
-        if match:
-            start = match.group(1)
-            end = match.group(2)
-            dep = match.group(3).strip()
-            arr = match.group(4).strip()
-            plans.append({
-                'start': start,
-                'end': end,
-                'dep': dep,
-                'arr': arr,
-                'is_ferry': is_ferry
-            })
-    return plans
-
 def parse_excel(df):
     """从DataFrame解析计划，返回候选计划列表（针对用户提供的Excel格式优化）"""
     # 去除列名中的首尾空格
@@ -110,11 +220,7 @@ def parse_excel(df):
     col_names = list(df.columns)
     st.write("检测到的列名（已去除空格）：", col_names)
 
-    # 直接根据您提供的Excel列顺序映射（列索引从0开始）
-    # 根据实际内容，列名在第1行（索引1），数据从索引2开始
-    # 但pandas读取后列名已变为字符串，我们需要通过实际内容判断
-    # 通过观察，需要的列有：飞机注册号（列C）、用途（列D）、出发日期（列G）、计划出发（列H）、预计到达（列O）、出发地（列K）、到达地（列M）
-    # 由于列名可能变化，我们通过关键字匹配更稳健
+    # 所需列的关键字匹配
     required_keywords = {
         '飞机注册号': ['飞机注册号', '注册号'],
         '用途': ['用途'],
@@ -159,8 +265,11 @@ def parse_excel(df):
         except:
             end = str(row[matched_cols['预计到达']]).strip()
         
-        dep = str(row[matched_cols['出发地']]).strip()
-        arr = str(row[matched_cols['到达地']]).strip()
+        dep_code = str(row[matched_cols['出发地']]).strip()
+        arr_code = str(row[matched_cols['到达地']]).strip()
+        # 映射为中文名称
+        dep = AIRPORT_MAP.get(dep_code, dep_code)
+        arr = AIRPORT_MAP.get(arr_code, arr_code)
         is_ferry = ('调机' in str(row[matched_cols['用途']]))
         
         candidates.append({
@@ -176,57 +285,12 @@ def parse_excel(df):
 
 # ---------- 侧边栏 ----------
 with st.sidebar:
-    st.header("📌 坐标输入（手动录入）")
-    with st.expander("按单元格批量添加计划", expanded=False):
-        selected_aircraft = st.selectbox("选择行（飞机）", AIRCRAFT, index=0)
-        col_options = [f"{DATE_LABELS[i]} {DATES[i]}" for i in range(7)]
-        selected_col = st.selectbox("选择列（日期）", range(7), format_func=lambda x: col_options[x])
-        target_date = DATES[selected_col]
-        
-        cell_text = st.text_area(
-            "输入该单元格内所有计划（每行一个）",
-            height=100,
-            placeholder="示例：\n07:00-09:00 首尔金浦-北京首都\n17:00-20:50 日本东京羽田-天津滨海 F"
-        )
-        
-        if st.button("添加到单元格", width='stretch'):
-            plans_to_add = parse_cell_text(cell_text)
-            if not plans_to_add:
-                st.warning("未解析到任何计划，请检查格式")
-            else:
-                conflicts = []
-                added = 0
-                for item in plans_to_add:
-                    if check_conflict(st.session_state.plans, selected_aircraft, target_date, item['start'], item['end']):
-                        conflicts.append(f"{item['start']}-{item['end']}")
-                    else:
-                        new_plan = FlightPlan(
-                            pid=get_next_id(),
-                            aircraft=selected_aircraft,
-                            date=target_date,
-                            start=item['start'],
-                            end=item['end'],
-                            dep_apt=item['dep'],
-                            arr_apt=item['arr'],
-                            is_ferry=item['is_ferry']
-                        )
-                        st.session_state.plans.append(new_plan)
-                        added += 1
-                if conflicts:
-                    st.error(f"以下计划时间冲突，未添加：{', '.join(conflicts)}")
-                if added > 0:
-                    st.success(f"成功添加 {added} 个计划到 {selected_aircraft} {DATE_LABELS[selected_col]} {target_date}")
-                    st.rerun()
-
-    st.markdown("---")
     st.header("📊 上传Excel自动解析")
     uploaded_excel = st.file_uploader("选择Excel文件（.xlsx）", type=['xlsx'])
     
     if uploaded_excel is not None:
         try:
-            # 关键修改：指定第二行为列名（header=1），并跳过前两行无用数据
             df = pd.read_excel(uploaded_excel, header=1)
-            # 删除可能的前几行空数据（实际数据从第3行开始，header=1后自动处理）
             st.success(f"成功读取Excel，共 {len(df)} 行")
             
             if st.button("解析并预览", width='stretch'):
@@ -243,7 +307,6 @@ with st.sidebar:
         st.markdown("#### 待导入计划预览")
         data = []
         for idx, cand in enumerate(st.session_state['excel_candidates']):
-            # 尝试将原始日期匹配到日历列
             try:
                 if cand['date_original'] in DATES:
                     default_idx = DATES.index(cand['date_original'])
@@ -306,29 +369,6 @@ with st.sidebar:
                 del st.session_state['excel_candidates']
                 st.rerun()
 
-    st.markdown("---")
-    st.header("🧪 模拟识别（快速测试）")
-    if st.button("添加示例计划（今天）", width='stretch'):
-        mock_plans = [
-            ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都", False),
-            ("B652Q", "17:00", "20:50", "日本东京羽田", "天津滨海", False),
-            ("B652R", "11:50", "14:00", "越南金兰", "吉隆坡", True),
-        ]
-        for ac, s, e, dep, arr, ferry in mock_plans:
-            new_plan = FlightPlan(
-                pid=get_next_id(),
-                aircraft=ac,
-                date=DATES[0],
-                start=s,
-                end=e,
-                dep_apt=dep,
-                arr_apt=arr,
-                is_ferry=ferry
-            )
-            st.session_state.plans.append(new_plan)
-        st.success("已添加3个示例计划到今天")
-        st.rerun()
-
     st.header("➕ 手动添加单个计划")
     with st.form("add_plan_form"):
         col1, col2 = st.columns(2)
@@ -375,9 +415,45 @@ with st.sidebar:
         st.success("所有计划已清空")
         st.rerun()
 
-# ---------- 日历网格 ----------
+# ---------- 日历网格（带隐藏调机计划功能）----------
 st.write("## 飞行计划日历")
 
+# 隐藏调机计划复选框
+hide_ferry = st.checkbox("隐藏调机计划", value=False)
+
+# 增强表格边框的CSS
+st.markdown("""
+<style>
+    .plan-grid {
+        border-collapse: collapse;
+        width: 100%;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 13px;
+    }
+    .plan-grid th {
+        background-color: #f2f2f2;
+        border: 2px solid #aaa;
+        padding: 10px 8px;
+        text-align: center;
+        font-weight: 600;
+    }
+    .plan-grid td {
+        border: 2px solid #aaa;
+        padding: 8px;
+        vertical-align: top;
+        background-color: white;
+    }
+    .aircraft-header {
+        background-color: #e6e6e6;
+        font-weight: 600;
+        text-align: center;
+        vertical-align: middle !important;
+        border: 2px solid #aaa;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# 构建表头
 cols = st.columns([1] + [1]*len(DATES))
 with cols[0]:
     st.markdown("**飞机/日期**")
@@ -385,17 +461,22 @@ for i, label in enumerate(DATE_LABELS):
     with cols[i+1]:
         st.markdown(f"**{label}**<br><span style='font-weight:normal'>{DATES[i]}</span>", unsafe_allow_html=True)
 
+# 为每架飞机生成行
 for ac in AIRCRAFT:
     row_cols = st.columns([1] + [1]*len(DATES))
     with row_cols[0]:
         st.markdown(f"**{ac}**")
     for i, date in enumerate(DATES):
         with row_cols[i+1]:
+            # 获取该飞机该日的所有计划，并根据hide_ferry过滤调机计划
             day_plans = [p for p in st.session_state.plans if p.aircraft == ac and p.date == date]
+            if hide_ferry:
+                day_plans = [p for p in day_plans if not p.is_ferry]
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
+                    # 飞机切换下拉框（演示功能，禁用）
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
                     st.selectbox(
                         "✈️",
@@ -461,4 +542,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动坐标输入和单条添加。调机计划以红色背景显示。")
+st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。")
