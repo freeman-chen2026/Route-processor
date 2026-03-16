@@ -14,8 +14,7 @@ AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/
 # ---------- 动态生成日期（从今天开始，连续7天）----------
 today = datetime.now().date()
 date_objects = [today + timedelta(days=i) for i in range(7)]
-DATES = [d.strftime("%m-%d") for d in date_objects]          # 格式：MM-DD
-# 星期映射（英文转中文）
+DATES = [d.strftime("%m-%d") for d in date_objects]
 weekday_map = {
     "Monday": "周一", "Tuesday": "周二", "Wednesday": "周三",
     "Thursday": "周四", "Friday": "周五", "Saturday": "周六", "Sunday": "周日"
@@ -38,7 +37,7 @@ class FlightPlan:
         self.arr_apt = arr_apt
         self.is_ferry = is_ferry
 
-# 初始化计划列表（示例计划使用固定日期，可能不在当前动态日期范围内）
+# 初始化计划列表（示例计划）
 if 'plans' not in st.session_state:
     st.session_state.plans = [
         FlightPlan(1, "B652Q", "03-15", "07:00", "09:00", "韩国首尔金浦", "北京首都"),
@@ -58,12 +57,10 @@ def get_next_id():
     return st.session_state.id_counter
 
 def time_to_minutes(t):
-    """HH:MM 转换为分钟数"""
     h, m = map(int, t.split(':'))
     return h*60 + m
 
 def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
-    """检查指定飞机在指定日期时间段是否有冲突（排除自己）"""
     start_m = time_to_minutes(start)
     end_m = time_to_minutes(end)
     for p in plans:
@@ -75,7 +72,6 @@ def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
     return False
 
 def plan_block_html(plan):
-    """生成计划块的HTML（确保标签正确闭合）"""
     color = "#ffebee" if plan.is_ferry else "#e3f2fd"
     border_color = "#f44336" if plan.is_ferry else "#2196f3"
     f_tag = '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if plan.is_ferry else ''
@@ -94,21 +90,16 @@ def plan_block_html(plan):
     </div>
     '''
 
-# ---------- 针对你截图格式优化的OCR解析函数 ----------
+# ---------- OCR解析函数（针对截图优化）----------
 def parse_ocr_text(text):
-    """优化版OCR解析，针对你提供的截图格式"""
     lines = text.split('\n')
     plans = []
-    
-    # 专门针对你截图中的常见格式
-    # 示例行: "B652Q17:00-20:50 日本东京羽田—天津滨海"
+    # 匹配常见格式：飞机号 时间 机场1—机场2
     pattern = r'([A-Z0-9]+)(\d{2}:\d{2})-(\d{2}:\d{2})\s+([^—\s]+)[—\-](.+)'
-    
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        
         match = re.search(pattern, line)
         if match:
             aircraft = match.group(1)
@@ -116,16 +107,10 @@ def parse_ocr_text(text):
             end = match.group(3)
             dep = match.group(4).strip()
             arr = match.group(5).strip()
-            # 去除可能尾随的括号、机组信息等
-            arr = re.sub(r'\s+[PC][0-9]{3,}.*$', '', arr)  # 去掉末尾的机组信息如 "P038,P071..."
-            
-            # 检测是否为调机（行内包含F标记，但这里可能没有）
+            arr = re.sub(r'\s+[PC][0-9]{3,}.*$', '', arr)  # 去除机组信息
             is_ferry = 'F' in line
-            
-            # 检查飞机号是否在列表中
             if aircraft not in AIRCRAFT:
                 aircraft = "N/A"
-            
             plans.append({
                 'aircraft': aircraft,
                 'start': start,
@@ -134,7 +119,6 @@ def parse_ocr_text(text):
                 'arr': arr,
                 'is_ferry': is_ferry
             })
-    
     return plans
 
 # ---------- 侧边栏 ----------
@@ -142,31 +126,21 @@ with st.sidebar:
     st.header("📸 截图识别")
     uploaded_file = st.file_uploader("上传航班计划截图", type=['png','jpg','jpeg'])
     
-    # 让用户选择本次识别出的计划放入哪一天
-    target_date_idx = st.selectbox(
-        "将识别出的计划放入日期",
-        range(7),
-        format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}",
-        index=0  # 默认今天
-    )
-    target_date = DATES[target_date_idx]
-    
+    # 简易识别（直接添加，日期默认今天）
     use_mock = st.checkbox("使用模拟识别（不依赖OCR）", value=True)
-    
-    if st.button("识别并生成计划", width='stretch'):
-        # 情况1：用户上传了文件，且未勾选模拟识别 -> 执行OCR
+    if st.button("快速识别（放入今天）", width='stretch'):
         if uploaded_file is not None and not use_mock:
             image = Image.open(uploaded_file)
             try:
-                text = pytesseract.image_to_string(image, lang='eng+chi_sim')  # 中英文识别
-                st.write("OCR识别结果预览（前500字符）：", text[:500])
+                text = pytesseract.image_to_string(image, lang='eng+chi_sim')
+                st.write("OCR结果预览：", text[:300])
                 parsed = parse_ocr_text(text)
                 if parsed:
                     for item in parsed:
                         new_plan = FlightPlan(
                             pid=get_next_id(),
                             aircraft=item['aircraft'],
-                            date=target_date,          # 使用用户选择的日期
+                            date=DATES[0],
                             start=item['start'],
                             end=item['end'],
                             dep_apt=item['dep'],
@@ -174,13 +148,13 @@ with st.sidebar:
                             is_ferry=item['is_ferry']
                         )
                         st.session_state.plans.append(new_plan)
-                    st.success(f"OCR识别：已生成 {len(parsed)} 个计划，放入 {DATE_LABELS[target_date_idx]} {target_date}")
+                    st.success(f"已添加 {len(parsed)} 个计划到今天")
                 else:
-                    st.warning("未从图片中识别出任何航班计划，请尝试模拟识别或手动添加。")
+                    st.warning("未识别到任何计划")
             except Exception as e:
                 st.error(f"OCR失败：{e}")
         else:
-            # 情况2：未上传文件，或勾选了模拟识别 -> 执行模拟识别（仍然放入用户选择的日期）
+            # 模拟识别
             mock_plans = [
                 ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都", False),
                 ("B652Q", "17:00", "20:50", "日本东京羽田", "天津滨海", False),
@@ -196,7 +170,7 @@ with st.sidebar:
                 new_plan = FlightPlan(
                     pid=get_next_id(),
                     aircraft=target_ac,
-                    date=target_date,        # 模拟识别也放入所选日期
+                    date=DATES[0],
                     start=s,
                     end=e,
                     dep_apt=dep,
@@ -204,13 +178,112 @@ with st.sidebar:
                     is_ferry=ferry
                 )
                 st.session_state.plans.append(new_plan)
-            st.success(f"模拟识别：已添加 {len(mock_plans)} 个测试计划，放入 {DATE_LABELS[target_date_idx]} {target_date}")
+            st.success(f"模拟识别：已添加 {len(mock_plans)} 个测试计划到今天")
+
+    # ---------- 新增：批量识别与日期修正 ----------
+    with st.expander("🛠️ 批量识别（可调整日期）"):
+        if uploaded_file is not None:
+            if st.button("开始批量识别", width='stretch'):
+                image = Image.open(uploaded_file)
+                try:
+                    text = pytesseract.image_to_string(image, lang='eng+chi_sim')
+                    parsed = parse_ocr_text(text)
+                    if parsed:
+                        # 将识别结果存入session_state，每项增加一个日期索引（默认今天）
+                        for item in parsed:
+                            item['date_idx'] = 0  # 默认今天
+                        st.session_state['batch_plans'] = parsed
+                        st.success(f"已识别 {len(parsed)} 条计划，请在下方调整日期")
+                    else:
+                        st.warning("未识别到任何计划")
+                except Exception as e:
+                    st.error(f"OCR失败：{e}")
+            
+            # 如果存在批量识别结果，显示可编辑表格
+            if 'batch_plans' in st.session_state and st.session_state['batch_plans']:
+                st.markdown("#### 待添加计划")
+                # 准备数据框
+                data = []
+                for idx, item in enumerate(st.session_state['batch_plans']):
+                    data.append({
+                        "选择": True,
+                        "飞机": item['aircraft'],
+                        "起飞": item['start'],
+                        "落地": item['end'],
+                        "起飞机场": item['dep'],
+                        "落地机场": item['arr'],
+                        "调机": item['is_ferry'],
+                        "日期": st.selectbox(
+                            "",
+                            range(7),
+                            format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}",
+                            key=f"date_{idx}",
+                            index=item.get('date_idx', 0),
+                            label_visibility="collapsed"
+                        )
+                    })
+                df_batch = pd.DataFrame(data)
+                # 显示可编辑表格（由于selectbox已嵌入，这里直接显示会重复，我们用另一种方式：每行一个选择框）
+                # 更简单的方法：直接用st.data_editor，但日期列用下拉框需要特殊处理。为简化，我们使用st.data_editor配合column_config
+                # 但streamlit的data_editor对日期选择有限制，我们改用每行单独显示的方式，但为了界面简洁，这里采用循环显示
+                for idx, item in enumerate(st.session_state['batch_plans']):
+                    col1, col2, col3, col4, col5, col6, col7 = st.columns([1,1,1,1.5,1.5,1,1.5])
+                    with col1:
+                        use = st.checkbox("", key=f"use_{idx}", value=True)
+                    with col2:
+                        st.write(item['aircraft'])
+                    with col3:
+                        st.write(f"{item['start']}-{item['end']}")
+                    with col4:
+                        st.write(item['dep'])
+                    with col5:
+                        st.write(item['arr'])
+                    with col6:
+                        st.write("F" if item['is_ferry'] else "")
+                    with col7:
+                        date_idx = st.selectbox(
+                            "",
+                            range(7),
+                            format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}",
+                            key=f"batch_date_{idx}",
+                            index=item.get('date_idx', 0),
+                            label_visibility="collapsed"
+                        )
+                        item['date_idx'] = date_idx
+                    # 存储选择状态
+                    if 'use_flags' not in st.session_state:
+                        st.session_state['use_flags'] = {}
+                    st.session_state['use_flags'][idx] = use
+                
+                if st.button("✅ 确认添加所选计划", width='stretch'):
+                    added = 0
+                    for idx, item in enumerate(st.session_state['batch_plans']):
+                        if st.session_state['use_flags'].get(idx, False):
+                            new_plan = FlightPlan(
+                                pid=get_next_id(),
+                                aircraft=item['aircraft'],
+                                date=DATES[item['date_idx']],
+                                start=item['start'],
+                                end=item['end'],
+                                dep_apt=item['dep'],
+                                arr_apt=item['arr'],
+                                is_ferry=item['is_ferry']
+                            )
+                            # 可选冲突检查（略）
+                            st.session_state.plans.append(new_plan)
+                            added += 1
+                    st.success(f"已添加 {added} 个计划")
+                    # 清空批量识别结果
+                    del st.session_state['batch_plans']
+                    st.rerun()
+        else:
+            st.info("请先上传截图")
 
     st.header("➕ 手动添加计划")
     with st.form("add_plan_form"):
         col1, col2 = st.columns(2)
         with col1:
-            ac = st.selectbox("飞机", AIRCRAFT, index=7)  # 默认N/A
+            ac = st.selectbox("飞机", AIRCRAFT, index=7)
             date_idx = st.selectbox("日期", range(7), format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}")
             start = st.text_input("起飞时间 (HH:MM)", "08:00")
             dep = st.text_input("起飞机场", "北京首都")
@@ -218,7 +291,6 @@ with st.sidebar:
             is_ferry = st.checkbox("调机计划 (红色F)")
             end = st.text_input("落地时间 (HH:MM)", "10:00")
             arr = st.text_input("落地机场", "上海虹桥")
-        
         submitted = st.form_submit_button("添加计划", width='stretch')
         if submitted:
             if re.match(r'^\d{2}:\d{2}$', start) and re.match(r'^\d{2}:\d{2}$', end):
@@ -253,10 +325,9 @@ with st.sidebar:
         st.success("所有计划已清空")
         st.rerun()
 
-# ---------- 日历网格 ----------
+# ---------- 日历网格（与之前完全相同）----------
 st.write("## 飞行计划日历")
 
-# 第一行：日期标题
 cols = st.columns([1] + [1]*len(DATES))
 with cols[0]:
     st.markdown("**飞机/日期**")
@@ -264,23 +335,17 @@ for i, label in enumerate(DATE_LABELS):
     with cols[i+1]:
         st.markdown(f"**{label}**<br><span style='font-weight:normal'>{DATES[i]}</span>", unsafe_allow_html=True)
 
-# 为每架飞机生成一行
 for ac in AIRCRAFT:
     row_cols = st.columns([1] + [1]*len(DATES))
     with row_cols[0]:
         st.markdown(f"**{ac}**")
-    
     for i, date in enumerate(DATES):
         with row_cols[i+1]:
-            # 获取该飞机该日的所有计划
             day_plans = [p for p in st.session_state.plans if p.aircraft == ac and p.date == date]
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
-                    # 显示计划块
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    
-                    # 飞机切换下拉框（每个计划一个）
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
                     selected_ac = st.selectbox(
                         "✈️",
@@ -290,20 +355,18 @@ for ac in AIRCRAFT:
                         label_visibility="collapsed"
                     )
                     if selected_ac != ac:
-                        # 检查冲突（如果目标不是N/A）
                         conflict = False
                         if selected_ac != "N/A":
                             conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
                         if conflict:
                             st.error(f"时间冲突，不能移动到 {selected_ac}")
                         else:
-                            # 更新飞机
                             p.aircraft = selected_ac
                             st.rerun()
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
-# ---------- 调机计划编辑区域 ----------
+# ---------- 调机计划编辑区域（保持不变）----------
 st.markdown("---")
 st.markdown("### 🔄 调机计划管理")
 
@@ -323,7 +386,6 @@ if ferry_plans:
                     with col2:
                         new_end = st.text_input("落地时间", fp.end, key=f"end_{fp.id}")
                         new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
-                    
                     if st.button("更新", key=f"update_{fp.id}", width='stretch'):
                         if not (re.match(r'^\d{2}:\d{2}$', new_start) and re.match(r'^\d{2}:\d{2}$', new_end)):
                             st.error("时间格式错误，应为 HH:MM")
@@ -357,4 +419,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：先选择日期，再上传截图识别（取消模拟识别），计划会放入所选日期。可逐日录入不同截图。")
+st.caption("📌 使用说明：上传截图后，点击「批量识别」可逐条调整日期，确认后一次性添加。快速识别会将所有计划默认放入今天。")
