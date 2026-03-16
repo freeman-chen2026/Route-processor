@@ -104,31 +104,36 @@ def parse_cell_text(text):
     return plans
 
 def parse_excel(df):
-    """从DataFrame解析计划，返回候选计划列表（支持模糊列名匹配）"""
-    # 标准化列名：去除首尾空格
+    """从DataFrame解析计划，返回候选计划列表（针对用户提供的Excel格式优化）"""
+    # 去除列名中的首尾空格
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
-    st.write("检测到的列名：", col_names)  # 调试输出，帮助用户确认
-    
-    # 定义所需列的关键字（支持部分匹配）
+    st.write("检测到的列名（已去除空格）：", col_names)
+
+    # 直接根据您提供的Excel列顺序映射（列索引从0开始）
+    # 根据实际内容，列名在第1行（索引1），数据从索引2开始
+    # 但pandas读取后列名已变为字符串，我们需要通过实际内容判断
+    # 通过观察，需要的列有：飞机注册号（列C）、用途（列D）、出发日期（列G）、计划出发（列H）、预计到达（列O）、出发地（列K）、到达地（列M）
+    # 由于列名可能变化，我们通过关键字匹配更稳健
     required_keywords = {
-        '飞机注册号': ['飞机注册号', '注册号', '飞机号', 'ac'],
-        '用途': ['用途', '任务类型', 'type'],
-        '出发日期': ['出发日期', '起飞日期', 'date'],
-        '计划出发': ['计划出发', '起飞时间', 'std'],
-        '预计到达': ['预计到达', '到达时间', 'sta'],
-        '出发地': ['出发地', '起飞机场', 'dep'],
-        '到达地': ['到达地', '目的地', 'arr']
+        '飞机注册号': ['飞机注册号', '注册号'],
+        '用途': ['用途'],
+        '出发日期': ['出发日期'],
+        '计划出发': ['计划出发'],
+        '预计到达': ['预计到达'],
+        '出发地': ['出发地'],
+        '到达地': ['到达地']
     }
     
-    # 找到匹配的列名
     matched_cols = {}
     for key, keywords in required_keywords.items():
+        found = False
         for col in col_names:
             if any(kw in col for kw in keywords):
                 matched_cols[key] = col
+                found = True
                 break
-        if key not in matched_cols:
+        if not found:
             st.error(f"未能找到匹配的列：{key}，请确保Excel包含相关列（当前列名：{col_names}）")
             return []
     
@@ -219,7 +224,9 @@ with st.sidebar:
     
     if uploaded_excel is not None:
         try:
-            df = pd.read_excel(uploaded_excel)
+            # 关键修改：指定第二行为列名（header=1），并跳过前两行无用数据
+            df = pd.read_excel(uploaded_excel, header=1)
+            # 删除可能的前几行空数据（实际数据从第3行开始，header=1后自动处理）
             st.success(f"成功读取Excel，共 {len(df)} 行")
             
             if st.button("解析并预览", width='stretch'):
@@ -236,6 +243,7 @@ with st.sidebar:
         st.markdown("#### 待导入计划预览")
         data = []
         for idx, cand in enumerate(st.session_state['excel_candidates']):
+            # 尝试将原始日期匹配到日历列
             try:
                 if cand['date_original'] in DATES:
                     default_idx = DATES.index(cand['date_original'])
