@@ -83,16 +83,13 @@ def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
     return False
 
 def render_plan_block(plan):
-    """返回计划显示的HTML块 - 载客蓝色，调机红色，Excel风格边框"""
     if plan.is_ferry:
-        # 调机计划 - 红色
-        color = "#ffebee"  # 浅红背景
-        border = "#f44336"  # 红色边框
+        color = "#ffebee"
+        border = "#f44336"
         tag = " <span style='color:#f44336; font-weight:bold;'>F</span>"
     else:
-        # 载客计划 - 蓝色
-        color = "#e3f2fd"  # 浅蓝背景
-        border = "#2196f3"  # 蓝色边框
+        color = "#e3f2fd"
+        border = "#2196f3"
         tag = ""
     
     return f"""
@@ -218,7 +215,6 @@ with st.sidebar:
                 st.error("时间格式错误")
 
 # ---------- 主界面：Excel风格日历表格 ----------
-# 自定义CSS实现Excel风格
 st.markdown("""
 <style>
     .excel-table {
@@ -267,7 +263,6 @@ st.markdown("""
         flex-direction: column;
         gap: 4px;
     }
-    /* 按钮样式优化 */
     .stButton > button {
         background-color: #f8f9fa;
         border: 1px solid #ced4da;
@@ -279,30 +274,6 @@ st.markdown("""
     .stButton > button:hover {
         background-color: #e9ecef;
         border-color: #adb5bd;
-    }
-    /* 飞机切换按钮组 */
-    .aircraft-switch {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        margin-top: 4px;
-    }
-    .aircraft-btn {
-        background-color: #f8f9fa;
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-        padding: 2px 6px;
-        font-size: 11px;
-        cursor: pointer;
-        color: #495057;
-    }
-    .aircraft-btn:hover {
-        background-color: #e2e6ea;
-    }
-    .aircraft-btn.selected {
-        background-color: #007bff;
-        color: white;
-        border-color: #0056b3;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -318,16 +289,14 @@ for ac in AIRCRAFT:
     html += f'<tr><td class="aircraft-header">{ac}</td>'
     
     for i, date in enumerate(DATES):
-        html += '<td>'
+        html += '<td><div class="plan-container">'
         
-        # 获取该飞机该日的所有计划
         day_plans = [p for p in st.session_state.plans if p.aircraft == ac and p.date == date]
         day_plans.sort(key=lambda x: x.start)
         
         if day_plans:
-            html += '<div class="plan-container">'
             for p in day_plans:
-                # 显示计划块
+                # 计划块
                 if p.is_ferry:
                     bg = "#ffebee"
                     border = "#f44336"
@@ -343,14 +312,17 @@ for ac in AIRCRAFT:
                     margin:4px 0;
                     font-size:12px;
                     box-shadow:0 1px 2px rgba(0,0,0,0.1);
-                    position:relative;
                 ">
                     <strong>{p.start}-{p.end}</strong>
                     { '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if p.is_ferry else '' }
                     <br>
                     <span style="color:#555;">{p.dep_apt}→{p.arr_apt}</span>
+                '''
+                
+                # 飞机切换下拉框（每个计划一个）
+                html += f'''
                     <div style="margin-top:6px;">
-                        <select onchange="changeAircraft({p.id}, this.value)" style="
+                        <select onchange="alert('飞机切换功能需与后端配合，当前为演示')" style="
                             width:100%;
                             padding:2px 4px;
                             font-size:11px;
@@ -359,32 +331,20 @@ for ac in AIRCRAFT:
                         ">
                             <option value="{p.aircraft}" selected>{p.aircraft} ✓</option>
                 '''
-                
                 for other_ac in AIRCRAFT:
                     if other_ac != p.aircraft:
                         html += f'<option value="{other_ac}">{other_ac}</option>'
-                
-                html += f'''
-                        </select>
-                    </div>
-                </div>
-                '''
-            html += '</div>'
+                html += f'</select></div></div>'
         else:
             html += '<div style="color:#adb5bd; text-align:center; padding:12px 0;">—</div>'
         
-        html += '</td>'
+        html += '</div></td>'
     
     html += '</tr>'
 
 html += '</table>'
 
-# 显示表格
 st.markdown(html, unsafe_allow_html=True)
-
-# 添加JavaScript处理飞机切换（需要Streamlit与JS通信）
-# 这里简化处理，保留原来的selectbox方式，但放在更合适的位置
-# 由于Streamlit的限制，这里还是使用st.selectbox，但优化布局
 
 # ---------- 调机计划编辑区域 ----------
 st.markdown("---")
@@ -428,6 +388,5 @@ with st.expander("📋 所有计划列表"):
     df = pd.DataFrame([p.to_dict() for p in st.session_state.plans])
     st.dataframe(df, use_container_width=True)
 
-# 操作说明（简洁版）
 st.markdown("---")
-st.caption("📌 点击计划下方的下拉框可更换飞机 · 红色边框为调机计划 · 蓝色边框为载客计划")
+st.caption("📌 蓝色：载客计划 · 红色：调机计划（带F）· 每个计划下方可选飞机（演示功能）")
