@@ -40,12 +40,11 @@ if 'plans' not in st.session_state:
         FlightPlan(9, "N440QS", "03-16", "16:00", "18:05", "越南金兰", "台中清泉岗", is_ferry=True),
     ]
 
-# 辅助函数（简化版，只用于获取每日计划）
 def time_to_minutes(t):
     h, m = map(int, t.split(':'))
     return h*60 + m
 
-# ---------- 构建表格 ----------
+# ---------- 样式 ----------
 st.markdown("""
 <style>
     .excel-table {
@@ -91,9 +90,18 @@ st.markdown("""
         background-color: #e3f2fd;
         border-left-color: #2196f3;
     }
+    .ferry-tag {
+        color: #f44336;
+        font-weight: bold;
+        margin-left: 4px;
+    }
+    .airport {
+        color: #555;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+# ---------- 构建表格 ----------
 html = '<table class="excel-table"><tr><th>飞机/日期</th>'
 for i, label in enumerate(DATE_LABELS):
     html += f'<th>{label}<br><span style="font-weight:normal;">{DATES[i]}</span></th>'
@@ -108,11 +116,11 @@ for ac in AIRCRAFT:
         if day_plans:
             for p in day_plans:
                 cls = "ferry" if p.is_ferry else "passenger"
-                f_tag = ' <span style="color:#f44336; font-weight:bold;">F</span>' if p.is_ferry else ''
+                f_tag = '<span class="ferry-tag">F</span>' if p.is_ferry else ''
                 html += f'''
                 <div class="plan-block {cls}">
                     <strong>{p.start}-{p.end}</strong>{f_tag}<br>
-                    <span style="color:#555;">{p.dep_apt}→{p.arr_apt}</span>
+                    <span class="airport">{p.dep_apt} → {p.arr_apt}</span>
                 </div>
                 '''
         else:
@@ -122,4 +130,4 @@ for ac in AIRCRAFT:
 html += '</table>'
 
 st.markdown(html, unsafe_allow_html=True)
-st.write("如果看到彩色计划块，说明计划渲染正常。")
+st.write("如果看到彩色计划块且格式整齐，说明渲染正常。")
