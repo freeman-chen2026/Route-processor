@@ -38,7 +38,7 @@ class FlightPlan:
         self.arr_apt = arr_apt
         self.is_ferry = is_ferry
 
-# 初始化计划列表（示例计划使用固定日期，可能不在当前动态日期范围内，但你可以手动添加新计划）
+# 初始化计划列表（示例计划使用固定日期，可能不在当前动态日期范围内）
 if 'plans' not in st.session_state:
     st.session_state.plans = [
         FlightPlan(1, "B652Q", "03-15", "07:00", "09:00", "韩国首尔金浦", "北京首都"),
@@ -167,6 +167,15 @@ with st.sidebar:
                     st.success("计划添加成功 (N/A)")
             else:
                 st.error("时间格式错误")
+
+    st.markdown("---")
+    st.header("🗑️ 清空所有计划")
+    confirm_clear = st.checkbox("确认清空所有计划（不可恢复）")
+    if st.button("清空计划", width='stretch', disabled=not confirm_clear):
+        st.session_state.plans = []
+        st.session_state.id_counter = 1000  # 重置ID计数器（可选）
+        st.success("所有计划已清空")
+        st.rerun()
 
 # ---------- 日历网格 ----------
 st.write("## 飞行计划日历")
