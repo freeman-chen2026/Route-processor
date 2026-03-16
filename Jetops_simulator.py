@@ -135,7 +135,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("上传航班计划截图", type=['png','jpg','jpeg'])
     use_mock = st.checkbox("使用模拟识别（不依赖OCR）", value=True)
     
-    if st.button("识别并生成计划", use_container_width=True):
+    if st.button("识别并生成计划", width='stretch'):
         if uploaded_file is not None and not use_mock:
             image = Image.open(uploaded_file)
             try:
@@ -189,7 +189,7 @@ with st.sidebar:
             end = st.text_input("落地时间 (HH:MM)", "10:00")
             arr = st.text_input("落地机场", "上海虹桥")
         
-        submitted = st.form_submit_button("添加计划", use_container_width=True)
+        submitted = st.form_submit_button("添加计划", width='stretch')
         if submitted:
             if re.match(r'^\d{2}:\d{2}$', start) and re.match(r'^\d{2}:\d{2}$', end):
                 new_plan = FlightPlan(
@@ -364,7 +364,7 @@ if ferry_plans:
                     new_end = st.text_input("落地时间", fp.end, key=f"end_{fp.id}")
                     new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
                 
-                if st.button("更新", key=f"update_{fp.id}", use_container_width=True):
+                if st.button("更新", key=f"update_{fp.id}", width='stretch'):
                     if new_start != fp.start or new_end != fp.end:
                         if check_conflict(st.session_state.plans, fp.aircraft, fp.date, new_start, new_end, exclude_id=fp.id):
                             st.error("时间冲突，更新失败")
