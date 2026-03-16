@@ -40,6 +40,7 @@ if 'plans' not in st.session_state:
         FlightPlan(9, "N440QS", "03-16", "16:00", "18:05", "越南金兰", "台中清泉岗", is_ferry=True),
     ]
 
+# 辅助函数（简化）
 def time_to_minutes(t):
     h, m = map(int, t.split(':'))
     return h*60 + m
@@ -116,7 +117,7 @@ for ac in AIRCRAFT:
         if day_plans:
             for p in day_plans:
                 cls = "ferry" if p.is_ferry else "passenger"
-                f_tag = '<span class="ferry-tag">F</span>' if p.is_ferry else ''
+                f_tag = f'<span class="ferry-tag">F</span>' if p.is_ferry else ''
                 html += f'''
                 <div class="plan-block {cls}">
                     <strong>{p.start}-{p.end}</strong>{f_tag}<br>
