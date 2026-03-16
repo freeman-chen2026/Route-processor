@@ -104,38 +104,59 @@ def parse_cell_text(text):
     return plans
 
 def parse_excel(df):
-    """从DataFrame解析计划，返回候选计划列表"""
-    candidates = []
-    # 检查必要列是否存在（根据实际样本调整列名）
-    required_cols = ['飞机注册号', '用途', '出发日期', '计划出发', '预计到达', '出发地', '到达地']
-    if not all(col in df.columns for col in required_cols):
-        st.error("Excel文件缺少必要列，请确保包含：飞机注册号、用途、出发日期、计划出发、预计到达、出发地、到达地")
-        return candidates
+    """从DataFrame解析计划，返回候选计划列表（支持模糊列名匹配）"""
+    # 标准化列名：去除首尾空格
+    df.columns = df.columns.astype(str).str.strip()
+    col_names = list(df.columns)
+    st.write("检测到的列名：", col_names)  # 调试输出，帮助用户确认
     
+    # 定义所需列的关键字（支持部分匹配）
+    required_keywords = {
+        '飞机注册号': ['飞机注册号', '注册号', '飞机号', 'ac'],
+        '用途': ['用途', '任务类型', 'type'],
+        '出发日期': ['出发日期', '起飞日期', 'date'],
+        '计划出发': ['计划出发', '起飞时间', 'std'],
+        '预计到达': ['预计到达', '到达时间', 'sta'],
+        '出发地': ['出发地', '起飞机场', 'dep'],
+        '到达地': ['到达地', '目的地', 'arr']
+    }
+    
+    # 找到匹配的列名
+    matched_cols = {}
+    for key, keywords in required_keywords.items():
+        for col in col_names:
+            if any(kw in col for kw in keywords):
+                matched_cols[key] = col
+                break
+        if key not in matched_cols:
+            st.error(f"未能找到匹配的列：{key}，请确保Excel包含相关列（当前列名：{col_names}）")
+            return []
+    
+    candidates = []
     for idx, row in df.iterrows():
-        ac = row['飞机注册号']
+        ac = row[matched_cols['飞机注册号']]
         if ac not in AIRCRAFT:
             ac = "N/A"
         
         try:
-            date_obj = pd.to_datetime(row['出发日期']).date()
+            date_obj = pd.to_datetime(row[matched_cols['出发日期']]).date()
             date_str = date_obj.strftime("%m-%d")
         except:
             continue
         
         try:
-            start = pd.to_datetime(row['计划出发']).strftime("%H:%M")
+            start = pd.to_datetime(row[matched_cols['计划出发']]).strftime("%H:%M")
         except:
-            start = str(row['计划出发']).strip()
+            start = str(row[matched_cols['计划出发']]).strip()
         
         try:
-            end = pd.to_datetime(row['预计到达']).strftime("%H:%M")
+            end = pd.to_datetime(row[matched_cols['预计到达']]).strftime("%H:%M")
         except:
-            end = str(row['预计到达']).strip()
+            end = str(row[matched_cols['预计到达']]).strip()
         
-        dep = str(row['出发地']).strip()
-        arr = str(row['到达地']).strip()
-        is_ferry = ('调机' in str(row['用途']))
+        dep = str(row[matched_cols['出发地']]).strip()
+        arr = str(row[matched_cols['到达地']]).strip()
+        is_ferry = ('调机' in str(row[matched_cols['用途']]))
         
         candidates.append({
             'aircraft': ac,
