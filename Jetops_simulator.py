@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from PIL import Image
 import pytesseract
@@ -10,9 +10,17 @@ st.set_page_config(layout="wide", page_title="公务机飞行计划")
 
 # 飞机列表（含N/A）
 AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/A"]
-# 日期范围
-DATES = ["03-15", "03-16", "03-17", "03-18", "03-19", "03-20", "03-21"]
-DATE_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+
+# ---------- 动态生成日期（从今天开始，连续7天）----------
+today = datetime.now().date()
+date_objects = [today + timedelta(days=i) for i in range(7)]
+DATES = [d.strftime("%m-%d") for d in date_objects]  # 格式：MM-DD
+# 星期映射（英文转中文）
+weekday_map = {
+    "Monday": "周一", "Tuesday": "周二", "Wednesday": "周三",
+    "Thursday": "周四", "Friday": "周五", "Saturday": "周六", "Sunday": "周日"
+}
+DATE_LABELS = [weekday_map[d.strftime("%A")] for d in date_objects]
 
 # 用于生成唯一ID
 if 'id_counter' not in st.session_state:
@@ -30,7 +38,7 @@ class FlightPlan:
         self.arr_apt = arr_apt
         self.is_ferry = is_ferry
 
-# 初始化计划列表
+# 初始化计划列表（示例计划使用固定日期，可能不在当前动态日期范围内，但你可以手动添加新计划）
 if 'plans' not in st.session_state:
     st.session_state.plans = [
         FlightPlan(1, "B652Q", "03-15", "07:00", "09:00", "韩国首尔金浦", "北京首都"),
@@ -103,7 +111,7 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"OCR失败：{e}")
         else:
-            # 模拟识别：生成两个测试计划放在N/A上
+            # 模拟识别：生成两个测试计划放在N/A上，日期使用今天
             mock_plans = [
                 ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都"),
                 ("B652R", "11:50", "14:00", "越南金兰", "吉隆坡"),
@@ -112,7 +120,7 @@ with st.sidebar:
                 new_plan = FlightPlan(
                     pid=get_next_id(),
                     aircraft="N/A",  # 先放在N/A
-                    date=DATES[0],
+                    date=DATES[0],   # 使用今天日期
                     start=s,
                     end=e,
                     dep_apt=dep,
@@ -120,7 +128,7 @@ with st.sidebar:
                     is_ferry=False
                 )
                 st.session_state.plans.append(new_plan)
-            st.success("模拟识别：已添加2个测试计划到N/A")
+            st.success("模拟识别：已添加2个测试计划到N/A（今天日期）")
 
     st.header("➕ 手动添加计划")
     with st.form("add_plan_form"):
@@ -210,13 +218,12 @@ for ac in AIRCRAFT:
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
-# ---------- 调机计划编辑区域（第三步）----------
+# ---------- 调机计划编辑区域 ----------
 st.markdown("---")
 st.markdown("### 🔄 调机计划管理")
 
 ferry_plans = [p for p in st.session_state.plans if p.is_ferry]
 if ferry_plans:
-    # 每行显示3个调机计划
     cols_per_row = 3
     for i in range(0, len(ferry_plans), cols_per_row):
         row_plans = ferry_plans[i:i+cols_per_row]
@@ -233,19 +240,15 @@ if ferry_plans:
                         new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
                     
                     if st.button("更新", key=f"update_{fp.id}", width='stretch'):
-                        # 验证时间格式
                         if not (re.match(r'^\d{2}:\d{2}$', new_start) and re.match(r'^\d{2}:\d{2}$', new_end)):
                             st.error("时间格式错误，应为 HH:MM")
                         else:
-                            # 检查时间是否有变动
                             time_changed = (new_start != fp.start) or (new_end != fp.end)
                             if time_changed:
-                                # 检查冲突（如果飞机不是N/A）
                                 if fp.aircraft != "N/A":
                                     if check_conflict(st.session_state.plans, fp.aircraft, fp.date, new_start, new_end, exclude_id=fp.id):
                                         st.error("时间冲突，更新失败")
                                         st.stop()
-                            # 更新计划
                             fp.start = new_start
                             fp.end = new_end
                             fp.dep_apt = new_dep
@@ -269,4 +272,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 蓝色：载客计划 · 红色：调机计划（带F）· 每个计划下方可选飞机 · 调机计划可展开编辑")
+st.caption("📌 日期从今天开始动态更新。示例计划使用固定日期，可能不在当前显示范围内，请手动添加新计划体验。")
