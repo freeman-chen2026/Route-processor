@@ -158,29 +158,33 @@ with st.sidebar:
     use_mock = st.checkbox("使用模拟识别（不依赖OCR）", value=True)
     
     if st.button("识别并生成计划", width='stretch'):
+        # 情况1：用户上传了文件，且未勾选模拟识别 -> 执行OCR
         if uploaded_file is not None and not use_mock:
             image = Image.open(uploaded_file)
             try:
                 text = pytesseract.image_to_string(image, lang='eng')
                 st.write("OCR识别结果：", text)
                 parsed = parse_ocr_text(text)
-                for item in parsed:
-                    new_plan = FlightPlan(
-                        pid=get_next_id(),
-                        aircraft=item['aircraft'],
-                        date=DATES[0],          # 默认今天，实际可让用户选择
-                        start=item['start'],
-                        end=item['end'],
-                        dep_apt=item['dep'],
-                        arr_apt=item['arr'],
-                        is_ferry=item['is_ferry']
-                    )
-                    st.session_state.plans.append(new_plan)
-                st.success(f"OCR识别：已生成 {len(parsed)} 个计划")
+                if parsed:
+                    for item in parsed:
+                        new_plan = FlightPlan(
+                            pid=get_next_id(),
+                            aircraft=item['aircraft'],
+                            date=DATES[0],          # 默认今天，实际可让用户选择
+                            start=item['start'],
+                            end=item['end'],
+                            dep_apt=item['dep'],
+                            arr_apt=item['arr'],
+                            is_ferry=item['is_ferry']
+                        )
+                        st.session_state.plans.append(new_plan)
+                    st.success(f"OCR识别：已生成 {len(parsed)} 个计划")
+                else:
+                    st.warning("未从图片中识别出任何航班计划，请尝试模拟识别或手动添加。")
             except Exception as e:
                 st.error(f"OCR失败：{e}")
         else:
-            # 模拟识别：生成多个测试计划，分配到不同飞机
+            # 情况2：未上传文件，或勾选了模拟识别 -> 执行模拟识别
             mock_plans = [
                 ("B652Q", "07:00", "09:00", "首尔金浦", "北京首都", False),
                 ("B652Q", "17:00", "20:50", "日本东京羽田", "天津滨海", False),
@@ -204,7 +208,7 @@ with st.sidebar:
                     is_ferry=ferry
                 )
                 st.session_state.plans.append(new_plan)
-            st.success(f"模拟识别：已添加 {len(mock_plans)} 个测试计划")
+            st.success(f"模拟识别：已添加 {len(mock_plans)} 个测试计划（日期为今天）")
 
     st.header("➕ 手动添加计划")
     with st.form("add_plan_form"):
@@ -357,4 +361,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 日期从今天开始动态更新。模拟识别生成了8个测试计划，分散在不同飞机上。")
+st.caption("📌 日期从今天开始动态更新。OCR识别默认将计划放入今天，如需调整请手动修改日期或使用模拟识别。")
