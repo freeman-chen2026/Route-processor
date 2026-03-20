@@ -154,8 +154,9 @@ def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
     return False
 
 def plan_block_html(plan):
-    color = "#ffebee" if plan.is_ferry else "#e3f2fd"
-    border_color = "#f44336" if plan.is_ferry else "#2196f3"
+    # 载客计划深蓝色 #b0c4de，调机计划浅红色 #ffebee
+    color = "#ffebee" if plan.is_ferry else "#b0c4de"
+    border_color = "#f44336" if plan.is_ferry else "#1e6f3f"
     f_tag = '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if plan.is_ferry else ''
     return f'''
     <div style="
@@ -335,7 +336,6 @@ with st.sidebar:
         st.rerun()
 
 # ---------- 日历网格（带隐藏调机计划功能和飞机切换）----------
-# 使用两列布局：左侧放标题，右侧放统计信息（段数+时间）
 title_col, stats_col = st.columns([2, 1])
 with title_col:
     st.write("## 飞行计划日历")
@@ -408,7 +408,7 @@ for i, label in enumerate(DATE_LABELS):
     with cols[i+1]:
         st.markdown(f"**{label}**<br><span style='font-weight:normal'>{DATES[i]}</span>", unsafe_allow_html=True)
 
-# 为每架飞机生成行（按新的顺序）
+# 为每架飞机生成行（按新顺序）
 for ac in AIRCRAFT:
     row_cols = st.columns([1] + [1]*len(DATES))
     with row_cols[0]:
