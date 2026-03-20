@@ -154,9 +154,10 @@ def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
     return False
 
 def plan_block_html(plan):
-    # 载客计划深蓝色 #b0c4de，调机计划浅红色 #ffebee
-    color = "#ffebee" if plan.is_ferry else "#b0c4de"
-    border_color = "#f44336" if plan.is_ferry else "#1e6f3f"
+    # 载客计划：太平洋蓝背景 #0099FF，边框 #0066CC
+    # 调机计划：浅红色背景 #ffebee，边框 #f44336
+    color = "#ffebee" if plan.is_ferry else "#0099FF"
+    border_color = "#f44336" if plan.is_ferry else "#0066CC"
     f_tag = '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if plan.is_ferry else ''
     return f'''
     <div style="
