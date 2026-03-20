@@ -375,19 +375,33 @@ with st.sidebar:
         st.rerun()
 
 # ---------- 日历网格（带隐藏调机计划功能和飞机切换）----------
-# 使用两列布局：左侧放标题，右侧放调机总时间
-title_col, time_col = st.columns([3, 1])
+# 使用两列布局：左侧放标题，右侧放两个总时间统计
+title_col, stats_col = st.columns([2, 1])
 with title_col:
     st.write("## 飞行计划日历")
-with time_col:
+with stats_col:
     # 计算7天内所有调机计划的飞行时间总和
     ferry_plans_7d = [p for p in st.session_state.plans if p.is_ferry and p.date in DATES]
-    total_minutes = 0
+    ferry_total_minutes = 0
     for p in ferry_plans_7d:
-        total_minutes += (time_to_minutes(p.end) - time_to_minutes(p.start))
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-    st.markdown(f"<div style='background-color:#f0f0f0; padding:10px; border-radius:5px; text-align:center; font-weight:bold;'>调机总时间: {hours}小时{minutes}分钟</div>", unsafe_allow_html=True)
+        ferry_total_minutes += (time_to_minutes(p.end) - time_to_minutes(p.start))
+    ferry_hours = ferry_total_minutes // 60
+    ferry_minutes = ferry_total_minutes % 60
+    
+    # 计算7天内所有载客计划的飞行时间总和
+    pax_plans_7d = [p for p in st.session_state.plans if not p.is_ferry and p.date in DATES]
+    pax_total_minutes = 0
+    for p in pax_plans_7d:
+        pax_total_minutes += (time_to_minutes(p.end) - time_to_minutes(p.start))
+    pax_hours = pax_total_minutes // 60
+    pax_minutes = pax_total_minutes % 60
+    
+    st.markdown(f"""
+    <div style='background-color:#f0f0f0; padding:10px; border-radius:5px; text-align:center; font-weight:bold;'>
+        <div>调机总时间: {ferry_hours}小时{ferry_minutes}分钟</div>
+        <div style='margin-top:5px;'>载客总时间: {pax_hours}小时{pax_minutes}分钟</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # 隐藏调机计划复选框
 hide_ferry = st.checkbox("隐藏调机计划", value=False)
@@ -526,4 +540,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角自动计算7天内所有调机计划的飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机计划和载客计划的飞行时间总和。")
