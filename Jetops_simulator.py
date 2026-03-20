@@ -79,21 +79,21 @@ def plan_block_html(plan):
     '''
 
 def parse_excel(df):
-    """从DataFrame解析计划，直接使用Excel中的出发地和到达地文本"""
+    """从DataFrame解析计划，直接使用Excel中的出发城市和到达城市文本"""
     # 去除列名中的首尾空格
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
     st.write("检测到的列名（已去除空格）：", col_names)
 
-    # 所需列的关键字匹配
+    # 所需列的关键字匹配（出发地→出发城市，到达地→到达城市）
     required_keywords = {
         '飞机注册号': ['飞机注册号', '注册号'],
         '用途': ['用途'],
         '出发日期': ['出发日期'],
         '计划出发': ['计划出发'],
         '预计到达': ['预计到达'],
-        '出发地': ['出发地'],
-        '到达地': ['到达地']
+        '出发城市': ['出发城市', '出发地'],
+        '到达城市': ['到达城市', '到达地']
     }
     
     matched_cols = {}
@@ -130,9 +130,9 @@ def parse_excel(df):
         except:
             end = str(row[matched_cols['预计到达']]).strip()
         
-        # 直接使用Excel中的出发地和到达地文本（去除首尾空格）
-        dep = str(row[matched_cols['出发地']]).strip()
-        arr = str(row[matched_cols['到达地']]).strip()
+        # 使用 Excel 中的“出发城市”和“到达城市”列文本
+        dep = str(row[matched_cols['出发城市']]).strip()
+        arr = str(row[matched_cols['到达城市']]).strip()
         is_ferry = ('调机' in str(row[matched_cols['用途']]))
         
         candidates.append({
@@ -405,4 +405,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称完全使用Excel中的文本，不再进行本地映射。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称完全使用Excel中的“出发城市”和“到达城市”列文本。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
