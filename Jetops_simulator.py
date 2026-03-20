@@ -77,20 +77,50 @@ def plan_block_html(plan):
     '''
 
 def parse_excel(df):
-    """从DataFrame解析计划，优先使用出发城市/到达城市列，若不存在则使用出发地/到达地"""
+    """从DataFrame解析计划，强制优先使用“出发城市”和“到达城市”列"""
+    # 去除列名中的首尾空格
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
     st.write("检测到的列名（已去除空格）：", col_names)
 
-    # 定义所需列的匹配优先级（先中文后四字码）
+    # 1. 优先查找“出发城市”
+    dep_col = None
+    for col in col_names:
+        if '出发城市' in col:
+            dep_col = col
+            break
+    if dep_col is None:
+        # 未找到“出发城市”，回退到“出发地”
+        for col in col_names:
+            if '出发地' in col:
+                dep_col = col
+                break
+    if dep_col is None:
+        st.error("未能找到“出发城市”或“出发地”列")
+        return []
+
+    # 2. 优先查找“到达城市”
+    arr_col = None
+    for col in col_names:
+        if '到达城市' in col:
+            arr_col = col
+            break
+    if arr_col is None:
+        for col in col_names:
+            if '到达地' in col:
+                arr_col = col
+                break
+    if arr_col is None:
+        st.error("未能找到“到达城市”或“到达地”列")
+        return []
+
+    # 其他必需列的匹配（使用关键字匹配）
     required_keywords = {
         '飞机注册号': ['飞机注册号', '注册号'],
         '用途': ['用途'],
         '出发日期': ['出发日期'],
         '计划出发': ['计划出发'],
-        '预计到达': ['预计到达'],
-        '出发城市': ['出发城市', '出发地'],   # 优先匹配"出发城市"
-        '到达城市': ['到达城市', '到达地']    # 优先匹配"到达城市"
+        '预计到达': ['预计到达']
     }
     
     matched_cols = {}
@@ -105,6 +135,12 @@ def parse_excel(df):
             st.error(f"未能找到匹配的列：{key}，请确保Excel包含相关列（当前列名：{col_names}）")
             return []
     
+    # 将出发城市和到达城市列加入匹配结果
+    matched_cols['出发城市'] = dep_col
+    matched_cols['到达城市'] = arr_col
+
+    st.success(f"使用列：飞机注册号={matched_cols['飞机注册号']}, 用途={matched_cols['用途']}, 出发日期={matched_cols['出发日期']}, 计划出发={matched_cols['计划出发']}, 预计到达={matched_cols['预计到达']}, 出发城市={dep_col}, 到达城市={arr_col}")
+
     candidates = []
     for idx, row in df.iterrows():
         ac = row[matched_cols['飞机注册号']]
@@ -127,7 +163,6 @@ def parse_excel(df):
         except:
             end = str(row[matched_cols['预计到达']]).strip()
         
-        # 使用出发城市列（如果匹配到的是出发地，则仍使用出发地；但我们已经优先匹配出发城市）
         dep = str(row[matched_cols['出发城市']]).strip()
         arr = str(row[matched_cols['到达城市']]).strip()
         is_ferry = ('调机' in str(row[matched_cols['用途']]))
@@ -389,4 +424,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列，若不存在则使用“出发地”和“到达地”。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
