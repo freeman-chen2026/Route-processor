@@ -347,11 +347,12 @@ for ac in AIRCRAFT:
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
-                    # 三列布局：计划块、切换下拉框、删除按钮
-                    cols_plan = st.columns([3, 1, 0.5])
-                    with cols_plan[0]:
+                    # 两列布局：计划块占大部分，右侧操作区（切换+删除）
+                    col_left, col_right = st.columns([4, 1])
+                    with col_left:
                         st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    with cols_plan[1]:
+                    with col_right:
+                        # 飞机切换下拉框
                         options = [ac] + [a for a in AIRCRAFT if a != ac]
                         selected_ac = st.selectbox(
                             "✈️",
@@ -369,8 +370,8 @@ for ac in AIRCRAFT:
                             else:
                                 p.aircraft = selected_ac
                                 st.rerun()
-                    with cols_plan[2]:
-                        if st.button("🗑️", key=f"delete_{p.id}"):
+                        # 删除按钮
+                        if st.button("🗑️", key=f"delete_{p.id}", use_container_width=True):
                             st.session_state.plans = [plan for plan in st.session_state.plans if plan.id != p.id]
                             st.rerun()
             else:
@@ -429,4 +430,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，点击🗑️按钮可删除计划。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划右侧的✈️下拉框可移动计划，点击🗑️按钮可删除计划。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
