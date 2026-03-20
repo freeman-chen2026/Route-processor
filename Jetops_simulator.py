@@ -78,7 +78,6 @@ def plan_block_html(plan):
 
 def parse_excel(df):
     """从DataFrame解析计划，强制优先使用“出发城市”和“到达城市”列"""
-    # 去除列名中的首尾空格
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
     st.write("检测到的列名（已去除空格）：", col_names)
@@ -90,7 +89,6 @@ def parse_excel(df):
             dep_col = col
             break
     if dep_col is None:
-        # 未找到“出发城市”，回退到“出发地”
         for col in col_names:
             if '出发地' in col:
                 dep_col = col
@@ -114,7 +112,7 @@ def parse_excel(df):
         st.error("未能找到“到达城市”或“到达地”列")
         return []
 
-    # 其他必需列的匹配（使用关键字匹配）
+    # 其他必需列的匹配
     required_keywords = {
         '飞机注册号': ['飞机注册号', '注册号'],
         '用途': ['用途'],
@@ -135,7 +133,6 @@ def parse_excel(df):
             st.error(f"未能找到匹配的列：{key}，请确保Excel包含相关列（当前列名：{col_names}）")
             return []
     
-    # 将出发城市和到达城市列加入匹配结果
     matched_cols['出发城市'] = dep_col
     matched_cols['到达城市'] = arr_col
 
@@ -350,23 +347,31 @@ for ac in AIRCRAFT:
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
-                    st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    options = [ac] + [a for a in AIRCRAFT if a != ac]
-                    selected_ac = st.selectbox(
-                        "✈️",
-                        options,
-                        index=0,
-                        key=f"move_{p.id}",
-                        label_visibility="collapsed"
-                    )
-                    if selected_ac != ac:
-                        conflict = False
-                        if selected_ac != "N/A":
-                            conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
-                        if conflict:
-                            st.error(f"时间冲突，不能移动到 {selected_ac}")
-                        else:
-                            p.aircraft = selected_ac
+                    # 三列布局：计划块、切换下拉框、删除按钮
+                    cols_plan = st.columns([3, 1, 0.5])
+                    with cols_plan[0]:
+                        st.markdown(plan_block_html(p), unsafe_allow_html=True)
+                    with cols_plan[1]:
+                        options = [ac] + [a for a in AIRCRAFT if a != ac]
+                        selected_ac = st.selectbox(
+                            "✈️",
+                            options,
+                            index=0,
+                            key=f"move_{p.id}",
+                            label_visibility="collapsed"
+                        )
+                        if selected_ac != ac:
+                            conflict = False
+                            if selected_ac != "N/A":
+                                conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
+                            if conflict:
+                                st.error(f"时间冲突，不能移动到 {selected_ac}")
+                            else:
+                                p.aircraft = selected_ac
+                                st.rerun()
+                    with cols_plan[2]:
+                        if st.button("🗑️", key=f"delete_{p.id}"):
+                            st.session_state.plans = [plan for plan in st.session_state.plans if plan.id != p.id]
                             st.rerun()
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
@@ -424,4 +429,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，点击🗑️按钮可删除计划。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
