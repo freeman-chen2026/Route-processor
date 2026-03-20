@@ -58,8 +58,6 @@ def check_conflict(plans, aircraft, date, start, end, exclude_id=None):
     return False
 
 def plan_block_html(plan):
-    # 载客计划：太平洋蓝背景 #0099FF，边框 #0066CC
-    # 调机计划：浅红色背景 #ffebee，边框 #f44336
     color = "#ffebee" if plan.is_ferry else "#0099FF"
     border_color = "#f44336" if plan.is_ferry else "#0066CC"
     f_tag = '<span style="color:#f44336; font-weight:bold; margin-left:4px;">F</span>' if plan.is_ferry else ''
@@ -79,21 +77,20 @@ def plan_block_html(plan):
     '''
 
 def parse_excel(df):
-    """从DataFrame解析计划，使用出发城市和到达城市列"""
-    # 去除列名中的首尾空格
+    """从DataFrame解析计划，优先使用出发城市/到达城市列，若不存在则使用出发地/到达地"""
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
     st.write("检测到的列名（已去除空格）：", col_names)
 
-    # 所需列的关键字匹配（优先使用“出发城市”和“到达城市”，兼容旧列名）
+    # 定义所需列的匹配优先级（先中文后四字码）
     required_keywords = {
         '飞机注册号': ['飞机注册号', '注册号'],
         '用途': ['用途'],
         '出发日期': ['出发日期'],
         '计划出发': ['计划出发'],
         '预计到达': ['预计到达'],
-        '出发城市': ['出发城市', '出发地'],
-        '到达城市': ['到达城市', '到达地']
+        '出发城市': ['出发城市', '出发地'],   # 优先匹配"出发城市"
+        '到达城市': ['到达城市', '到达地']    # 优先匹配"到达城市"
     }
     
     matched_cols = {}
@@ -130,7 +127,7 @@ def parse_excel(df):
         except:
             end = str(row[matched_cols['预计到达']]).strip()
         
-        # 使用出发城市和到达城市列的原始文本
+        # 使用出发城市列（如果匹配到的是出发地，则仍使用出发地；但我们已经优先匹配出发城市）
         dep = str(row[matched_cols['出发城市']]).strip()
         arr = str(row[matched_cols['到达城市']]).strip()
         is_ferry = ('调机' in str(row[matched_cols['用途']]))
@@ -164,12 +161,10 @@ with st.sidebar:
                     added = 0
                     conflicts = []
                     for cand in candidates:
-                        # 自动匹配日期：如果原始日期在当前7天内则使用，否则默认今天
                         if cand['date_original'] in DATES:
                             target_date = cand['date_original']
                         else:
                             target_date = DATES[0]
-                        # 检查冲突
                         if check_conflict(st.session_state.plans, cand['aircraft'], target_date, cand['start'], cand['end']):
                             conflicts.append(f"{cand['aircraft']} {cand['start']}-{cand['end']} {cand['dep']}-{cand['arr']} ({cand['date_original']})")
                         else:
@@ -238,12 +233,11 @@ with st.sidebar:
         st.success("所有计划已清空")
         st.rerun()
 
-# ---------- 日历网格（带隐藏调机计划功能和飞机切换）----------
+# ---------- 日历网格 ----------
 title_col, stats_col = st.columns([2, 1])
 with title_col:
     st.write("## 飞行计划日历")
 with stats_col:
-    # 计算7天内所有调机计划的飞行时间总和
     ferry_plans_7d = [p for p in st.session_state.plans if p.is_ferry and p.date in DATES]
     ferry_total_minutes = 0
     for p in ferry_plans_7d:
@@ -252,7 +246,6 @@ with stats_col:
     ferry_minutes = ferry_total_minutes % 60
     ferry_segments = len(ferry_plans_7d)
     
-    # 计算7天内所有载客计划的飞行时间总和
     pax_plans_7d = [p for p in st.session_state.plans if not p.is_ferry and p.date in DATES]
     pax_total_minutes = 0
     for p in pax_plans_7d:
@@ -268,10 +261,8 @@ with stats_col:
     </div>
     """, unsafe_allow_html=True)
 
-# 隐藏调机计划复选框
 hide_ferry = st.checkbox("隐藏调机计划", value=False)
 
-# 增强表格边框的CSS
 st.markdown("""
 <style>
     .plan-grid {
@@ -303,7 +294,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 构建表头
+# 表头
 cols = st.columns([1] + [1]*len(DATES))
 with cols[0]:
     st.markdown("**飞机/日期**")
@@ -311,24 +302,20 @@ for i, label in enumerate(DATE_LABELS):
     with cols[i+1]:
         st.markdown(f"**{label}**<br><span style='font-weight:normal'>{DATES[i]}</span>", unsafe_allow_html=True)
 
-# 为每架飞机生成行（按新顺序）
+# 每行飞机
 for ac in AIRCRAFT:
     row_cols = st.columns([1] + [1]*len(DATES))
     with row_cols[0]:
         st.markdown(f"**{ac}**")
     for i, date in enumerate(DATES):
         with row_cols[i+1]:
-            # 获取该飞机该日的所有计划，并根据hide_ferry过滤调机计划
             day_plans = [p for p in st.session_state.plans if p.aircraft == ac and p.date == date]
             if hide_ferry:
                 day_plans = [p for p in day_plans if not p.is_ferry]
             day_plans.sort(key=lambda x: x.start)
             if day_plans:
                 for p in day_plans:
-                    # 显示计划块
                     st.markdown(plan_block_html(p), unsafe_allow_html=True)
-                    
-                    # 飞机切换下拉框（启用）
                     options = [ac] + [a for a in AIRCRAFT if a != ac]
                     selected_ac = st.selectbox(
                         "✈️",
@@ -337,16 +324,13 @@ for ac in AIRCRAFT:
                         key=f"move_{p.id}",
                         label_visibility="collapsed"
                     )
-                    # 如果用户选择了不同的飞机
                     if selected_ac != ac:
-                        # 检查目标飞机是否有冲突（排除自身）
                         conflict = False
                         if selected_ac != "N/A":
                             conflict = check_conflict(st.session_state.plans, selected_ac, p.date, p.start, p.end, exclude_id=p.id)
                         if conflict:
                             st.error(f"时间冲突，不能移动到 {selected_ac}")
                         else:
-                            # 更新计划所属飞机
                             p.aircraft = selected_ac
                             st.rerun()
             else:
@@ -405,4 +389,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列，若不存在则使用“出发地”和“到达地”。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
