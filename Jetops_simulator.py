@@ -18,102 +18,6 @@ weekday_map = {
 }
 DATE_LABELS = [weekday_map[d.strftime("%A")] for d in date_objects]
 
-# 机场四字码 -> 中文名称映射（可扩展）
-AIRPORT_MAP = {
-    "VDTI": "柬埔寨金边德崇",
-    "WSSL": "新加坡实里达",
-    "VVCR": "越南金兰",
-    "WMSA": "马来西亚吉隆坡梳邦",
-    "VHHH": "香港",
-    "ZSHC": "杭州萧山",
-    "ZSSS": "上海虹桥",
-    "ZBAA": "北京首都",
-    "RJTT": "日本东京羽田",
-    "ZBTJ": "天津滨海",
-    "VTSP": "泰国普吉",
-    "VLVT": "老挝万象",
-    "ZUCK": "重庆江北",
-    "ZGSZ": "深圳宝安",
-    "VMMC": "澳门",
-    "VVTS": "越南胡志明市",
-    "RCMQ": "台中清泉岗",
-    "RPLL": "菲律宾马尼拉",
-    "ZGGG": "广州白云",
-    "ZSQZ": "泉州晋江",
-    "ZSPD": "上海浦东",
-    "PANC": "美国安克雷奇史蒂文斯",
-    "KSFO": "美国旧金山",
-    "NZQN": "新西兰皇后镇",
-    "WAMM": "印尼万鸦老",
-    "WAMP": "印尼莫罗瓦利工业园",
-    "WAEH": "印尼韦达港",
-    "VTCC": "泰国清迈",
-    "ZHCC": "郑州新郑",
-    "ZJSY": "三亚凤凰",
-    "ZSNB": "宁波栎社",
-    "ZBAD": "北京大兴",
-    "ZGNN": "南宁吴圩",
-    "ZPPP": "昆明长水",
-    "ZUUU": "成都双流",
-    "ZUCK": "重庆江北",
-    "ZGSZ": "深圳宝安",
-    "ZGGG": "广州白云",
-    "ZSHC": "杭州萧山",
-    "ZSNJ": "南京禄口",
-    "ZSOF": "合肥新桥",
-    "ZSQD": "青岛胶东",
-    "ZSYT": "烟台蓬莱",
-    "ZBTJ": "天津滨海",
-    "ZBSJ": "石家庄正定",
-    "ZBYN": "太原武宿",
-    "ZBCF": "长春龙嘉",
-    "ZYHB": "哈尔滨太平",
-    "ZYTL": "大连周水子",
-    "ZYJM": "佳木斯东郊",
-    "ZYTX": "沈阳桃仙",
-    "ZHHH": "武汉天河",
-    "ZGHA": "长沙黄花",
-    "ZSCN": "南昌昌北",
-    "ZSFZ": "福州长乐",
-    "ZSAM": "厦门高崎",
-    "ZGSZ": "深圳宝安",
-    "ZGKL": "桂林两江",
-    "ZJHK": "海口美兰",
-    "ZJQH": "琼海博鳌",
-    "ZJSY": "三亚凤凰",
-    "ZWWW": "乌鲁木齐地窝堡",
-    "ZLLL": "兰州中川",
-    "ZLXY": "西安咸阳",
-    "ZLIC": "银川河东",
-    "ZLHZ": "汉中城固",
-    "ZLXN": "西宁曹家堡",
-    "ZULS": "拉萨贡嘎",
-    "ZPPP": "昆明长水",
-    "ZUCK": "重庆江北",
-    "ZUUU": "成都双流",
-    "ZUMY": "绵阳南郊",
-    "ZUWX": "无锡硕放",
-    "ZSNB": "宁波栎社",
-    "ZSNJ": "南京禄口",
-    "ZSOF": "合肥新桥",
-    "ZSQD": "青岛胶东",
-    "ZSYN": "盐城南洋",
-    "ZSYT": "烟台蓬莱",
-    "ZSJG": "济宁曲阜",
-    "ZSLG": "连云港白塔埠",
-    "ZSPD": "上海浦东",
-    "ZSSS": "上海虹桥",
-    "ZSTX": "黄山屯溪",
-    "ZSWZ": "温州龙湾",
-    "ZSXZ": "徐州观音",
-    "ZSYW": "义乌",
-    "ZSYN": "盐城",
-    "ZSYC": "宜春明月山",
-    "ZSYY": "烟台",
-    "ZSZJ": "湛江",
-    "ZSZS": "舟山普陀山",
-}
-
 # 用于生成唯一ID
 if 'id_counter' not in st.session_state:
     st.session_state.id_counter = 1000
@@ -175,7 +79,7 @@ def plan_block_html(plan):
     '''
 
 def parse_excel(df):
-    """从DataFrame解析计划，返回候选计划列表（针对用户提供的Excel格式优化）"""
+    """从DataFrame解析计划，直接使用Excel中的出发地和到达地文本"""
     # 去除列名中的首尾空格
     df.columns = df.columns.astype(str).str.strip()
     col_names = list(df.columns)
@@ -226,11 +130,9 @@ def parse_excel(df):
         except:
             end = str(row[matched_cols['预计到达']]).strip()
         
-        dep_code = str(row[matched_cols['出发地']]).strip()
-        arr_code = str(row[matched_cols['到达地']]).strip()
-        # 映射为中文名称
-        dep = AIRPORT_MAP.get(dep_code, dep_code)
-        arr = AIRPORT_MAP.get(arr_code, arr_code)
+        # 直接使用Excel中的出发地和到达地文本（去除首尾空格）
+        dep = str(row[matched_cols['出发地']]).strip()
+        arr = str(row[matched_cols['到达地']]).strip()
         is_ferry = ('调机' in str(row[matched_cols['用途']]))
         
         candidates.append({
@@ -503,4 +405,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称完全使用Excel中的文本，不再进行本地映射。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
