@@ -5,8 +5,8 @@ import re
 
 st.set_page_config(layout="wide", page_title="公务机飞行计划")
 
-# 飞机列表（含N/A）
-AIRCRAFT = ["B652Q", "B652R", "B652S", "N440QS", "T73338", "N88AY", "MLLIN", "N/A"]
+# 飞机列表（按指定顺序）
+AIRCRAFT = ["B652Q", "B652R", "B652S", "MLLIN", "N440QS", "N88AY", "T73338", "N/A"]
 
 # ---------- 动态生成日期（从今天开始，连续7天）----------
 today = datetime.now().date()
@@ -252,7 +252,6 @@ with st.sidebar:
             df = pd.read_excel(uploaded_excel, header=1)
             st.success(f"成功读取Excel，共 {len(df)} 行")
             
-            # 直接解析并导入按钮
             if st.button("解析并导入", width='stretch'):
                 candidates = parse_excel(df)
                 if not candidates:
@@ -409,7 +408,7 @@ for i, label in enumerate(DATE_LABELS):
     with cols[i+1]:
         st.markdown(f"**{label}**<br><span style='font-weight:normal'>{DATES[i]}</span>", unsafe_allow_html=True)
 
-# 为每架飞机生成行
+# 为每架飞机生成行（按新的顺序）
 for ac in AIRCRAFT:
     row_cols = st.columns([1] + [1]*len(DATES))
     with row_cols[0]:
