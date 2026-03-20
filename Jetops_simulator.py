@@ -375,7 +375,7 @@ with st.sidebar:
         st.rerun()
 
 # ---------- 日历网格（带隐藏调机计划功能和飞机切换）----------
-# 使用两列布局：左侧放标题，右侧放两个总时间统计
+# 使用两列布局：左侧放标题，右侧放统计信息（段数+时间）
 title_col, stats_col = st.columns([2, 1])
 with title_col:
     st.write("## 飞行计划日历")
@@ -387,6 +387,7 @@ with stats_col:
         ferry_total_minutes += (time_to_minutes(p.end) - time_to_minutes(p.start))
     ferry_hours = ferry_total_minutes // 60
     ferry_minutes = ferry_total_minutes % 60
+    ferry_segments = len(ferry_plans_7d)
     
     # 计算7天内所有载客计划的飞行时间总和
     pax_plans_7d = [p for p in st.session_state.plans if not p.is_ferry and p.date in DATES]
@@ -395,11 +396,12 @@ with stats_col:
         pax_total_minutes += (time_to_minutes(p.end) - time_to_minutes(p.start))
     pax_hours = pax_total_minutes // 60
     pax_minutes = pax_total_minutes % 60
+    pax_segments = len(pax_plans_7d)
     
     st.markdown(f"""
     <div style='background-color:#f0f0f0; padding:10px; border-radius:5px; text-align:center; font-weight:bold;'>
-        <div>调机总时间: {ferry_hours}小时{ferry_minutes}分钟</div>
-        <div style='margin-top:5px;'>载客总时间: {pax_hours}小时{pax_minutes}分钟</div>
+        <div>调机: {ferry_segments}段, {ferry_hours}小时{ferry_minutes}分钟</div>
+        <div style='margin-top:5px;'>载客: {pax_segments}段, {pax_hours}小时{pax_minutes}分钟</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -540,4 +542,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机计划和载客计划的飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
