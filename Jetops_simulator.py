@@ -252,81 +252,42 @@ with st.sidebar:
             df = pd.read_excel(uploaded_excel, header=1)
             st.success(f"成功读取Excel，共 {len(df)} 行")
             
-            if st.button("解析并预览", width='stretch'):
+            # 直接解析并导入按钮
+            if st.button("解析并导入", width='stretch'):
                 candidates = parse_excel(df)
-                if candidates:
-                    st.session_state['excel_candidates'] = candidates
-                    st.success(f"解析出 {len(candidates)} 条候选计划")
-                else:
+                if not candidates:
                     st.warning("未解析出任何计划，请检查文件格式")
+                else:
+                    added = 0
+                    conflicts = []
+                    for cand in candidates:
+                        # 自动匹配日期：如果原始日期在当前7天内则使用，否则默认今天
+                        if cand['date_original'] in DATES:
+                            target_date = cand['date_original']
+                        else:
+                            target_date = DATES[0]
+                        # 检查冲突
+                        if check_conflict(st.session_state.plans, cand['aircraft'], target_date, cand['start'], cand['end']):
+                            conflicts.append(f"{cand['aircraft']} {cand['start']}-{cand['end']} {cand['dep']}-{cand['arr']} ({cand['date_original']})")
+                        else:
+                            new_plan = FlightPlan(
+                                pid=get_next_id(),
+                                aircraft=cand['aircraft'],
+                                date=target_date,
+                                start=cand['start'],
+                                end=cand['end'],
+                                dep_apt=cand['dep'],
+                                arr_apt=cand['arr'],
+                                is_ferry=cand['is_ferry']
+                            )
+                            st.session_state.plans.append(new_plan)
+                            added += 1
+                    if conflicts:
+                        st.error(f"以下计划冲突，未添加：{', '.join(conflicts)}")
+                    st.success(f"成功添加 {added} 个计划")
+                    st.rerun()
         except Exception as e:
             st.error(f"读取Excel失败：{e}")
-    
-    if 'excel_candidates' in st.session_state and st.session_state['excel_candidates']:
-        st.markdown("#### 待导入计划预览")
-        data = []
-        for idx, cand in enumerate(st.session_state['excel_candidates']):
-            try:
-                if cand['date_original'] in DATES:
-                    default_idx = DATES.index(cand['date_original'])
-                else:
-                    default_idx = 0
-            except:
-                default_idx = 0
-            
-            row_data = {
-                "选择": True,
-                "飞机": cand['aircraft'],
-                "起飞": cand['start'],
-                "落地": cand['end'],
-                "起飞机场": cand['dep'],
-                "落地机场": cand['arr'],
-                "调机": "是" if cand['is_ferry'] else "否",
-                "原始日期": cand['date_original'],
-                "分配日期": st.selectbox(
-                    "",
-                    range(7),
-                    format_func=lambda x: f"{DATE_LABELS[x]} {DATES[x]}",
-                    key=f"excel_date_{idx}",
-                    index=default_idx,
-                    label_visibility="collapsed"
-                )
-            }
-            data.append(row_data)
-        
-        df_preview = pd.DataFrame(data)
-        st.dataframe(df_preview, use_container_width=True)
-        
-        if st.button("✅ 导入所选计划", width='stretch'):
-            added = 0
-            conflicts = []
-            for idx, row_data in enumerate(data):
-                if not row_data["选择"]:
-                    continue
-                selected_date_idx = st.session_state[f"excel_date_{idx}"]
-                target_date = DATES[selected_date_idx]
-                cand = st.session_state['excel_candidates'][idx]
-                if check_conflict(st.session_state.plans, cand['aircraft'], target_date, cand['start'], cand['end']):
-                    conflicts.append(f"{cand['aircraft']} {cand['start']}-{cand['end']} {cand['dep']}-{cand['arr']}")
-                else:
-                    new_plan = FlightPlan(
-                        pid=get_next_id(),
-                        aircraft=cand['aircraft'],
-                        date=target_date,
-                        start=cand['start'],
-                        end=cand['end'],
-                        dep_apt=cand['dep'],
-                        arr_apt=cand['arr'],
-                        is_ferry=cand['is_ferry']
-                    )
-                    st.session_state.plans.append(new_plan)
-                    added += 1
-            if conflicts:
-                st.error(f"以下计划冲突，未添加：{', '.join(conflicts)}")
-            if added > 0:
-                st.success(f"成功添加 {added} 个计划")
-                del st.session_state['excel_candidates']
-                st.rerun()
 
     st.header("➕ 手动添加单个计划")
     with st.form("add_plan_form"):
@@ -542,4 +503,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击解析，可调整日期后导入。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可将计划移动到其他飞机（自动检测时间冲突）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
