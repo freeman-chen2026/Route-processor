@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import re
+from collections import defaultdict
 
 st.set_page_config(layout="wide", page_title="公务机飞行计划")
 
@@ -368,49 +369,60 @@ for ac in AIRCRAFT:
             else:
                 st.markdown("<div style='color:#adb5bd; text-align:center; padding:12px 0;'>—</div>", unsafe_allow_html=True)
 
-# ---------- 调机计划编辑区域 ----------
+# ---------- 调机计划管理区域（按日期分组）----------
 st.markdown("---")
 st.markdown("### 🔄 调机计划管理")
 
 ferry_plans = [p for p in st.session_state.plans if p.is_ferry]
 if ferry_plans:
-    # 按日期排序，同一天内按起飞时间排序
-    ferry_plans_sorted = sorted(ferry_plans, key=lambda x: (x.date, x.start))
+    # 按日期分组
+    grouped = defaultdict(list)
+    for fp in ferry_plans:
+        grouped[fp.date].append(fp)
     
-    cols_per_row = 3
-    for i in range(0, len(ferry_plans_sorted), cols_per_row):
-        row_plans = ferry_plans_sorted[i:i+cols_per_row]
-        row_cols = st.columns(cols_per_row)
-        for col_idx, fp in enumerate(row_plans):
-            with row_cols[col_idx]:
-                with st.expander(f"调机 {fp.id} - {fp.aircraft} {fp.date} {fp.start}-{fp.end}"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        new_start = st.text_input("起飞时间", fp.start, key=f"start_{fp.id}")
-                        new_dep = st.text_input("起飞机场", fp.dep_apt, key=f"dep_{fp.id}")
-                    with col2:
-                        new_end = st.text_input("落地时间", fp.end, key=f"end_{fp.id}")
-                        new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
-                    if st.button("更新", key=f"update_{fp.id}", width='stretch'):
-                        if not (re.match(r'^\d{2}:\d{2}$', new_start) and re.match(r'^\d{2}:\d{2}$', new_end)):
-                            st.error("时间格式错误，应为 HH:MM")
-                        else:
-                            time_changed = (new_start != fp.start) or (new_end != fp.end)
-                            if time_changed:
-                                if fp.aircraft != "N/A":
-                                    if check_conflict(st.session_state.plans, fp.aircraft, fp.date, new_start, new_end, exclude_id=fp.id):
-                                        st.error("时间冲突，更新失败")
-                                        st.stop()
-                            fp.start = new_start
-                            fp.end = new_end
-                            fp.dep_apt = new_dep
-                            fp.arr_apt = new_arr
-                            st.success("已更新")
-                            st.rerun()
-                    # 删除按钮
-                    if st.button("🗑️ 删除调机", key=f"delete_{fp.id}", width='stretch'):
-                        st.session_state.plans = [plan for plan in st.session_state.plans if plan.id != fp.id]
-                        st.rerun()
+    # 按日期排序（与日历顺序一致）
+    for date in DATES:
+        if date in grouped:
+            # 获取该日期的调机计划，并按飞机号排序
+            plans_in_date = sorted(grouped[date], key=lambda x: x.aircraft)
+            # 创建折叠面板，标题为“03-22 调机计划”
+            with st.expander(f"{date} 调机计划"):
+                # 每行显示3个，保持与之前一致的布局
+                cols_per_row = 3
+                for i in range(0, len(plans_in_date), cols_per_row):
+                    row_plans = plans_in_date[i:i+cols_per_row]
+                    row_cols = st.columns(cols_per_row)
+                    for col_idx, fp in enumerate(row_plans):
+                        with row_cols[col_idx]:
+                            with st.container():
+                                st.markdown(f"**{fp.aircraft}** {fp.start}-{fp.end}")
+                                st.markdown(f"{fp.dep_apt} → {fp.arr_apt}")
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    new_start = st.text_input("起飞时间", fp.start, key=f"start_{fp.id}")
+                                    new_dep = st.text_input("起飞机场", fp.dep_apt, key=f"dep_{fp.id}")
+                                with col2:
+                                    new_end = st.text_input("落地时间", fp.end, key=f"end_{fp.id}")
+                                    new_arr = st.text_input("落地机场", fp.arr_apt, key=f"arr_{fp.id}")
+                                if st.button("更新", key=f"update_{fp.id}", width='stretch'):
+                                    if not (re.match(r'^\d{2}:\d{2}$', new_start) and re.match(r'^\d{2}:\d{2}$', new_end)):
+                                        st.error("时间格式错误，应为 HH:MM")
+                                    else:
+                                        time_changed = (new_start != fp.start) or (new_end != fp.end)
+                                        if time_changed:
+                                            if fp.aircraft != "N/A":
+                                                if check_conflict(st.session_state.plans, fp.aircraft, fp.date, new_start, new_end, exclude_id=fp.id):
+                                                    st.error("时间冲突，更新失败")
+                                                    st.stop()
+                                        fp.start = new_start
+                                        fp.end = new_end
+                                        fp.dep_apt = new_dep
+                                        fp.arr_apt = new_arr
+                                        st.success("已更新")
+                                        st.rerun()
+                                if st.button("🗑️ 删除", key=f"delete_{fp.id}", width='stretch'):
+                                    st.session_state.plans = [plan for plan in st.session_state.plans if plan.id != fp.id]
+                                    st.rerun()
 else:
     st.info("暂无调机计划")
 
@@ -428,4 +440,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，在“调机计划管理”中可编辑或删除调机计划（已按日期排序）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，在“调机计划管理”中可按日期查看、编辑或删除调机计划。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
