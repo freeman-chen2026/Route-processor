@@ -374,9 +374,12 @@ st.markdown("### 🔄 调机计划管理")
 
 ferry_plans = [p for p in st.session_state.plans if p.is_ferry]
 if ferry_plans:
+    # 按日期排序，同一天内按起飞时间排序
+    ferry_plans_sorted = sorted(ferry_plans, key=lambda x: (x.date, x.start))
+    
     cols_per_row = 3
-    for i in range(0, len(ferry_plans), cols_per_row):
-        row_plans = ferry_plans[i:i+cols_per_row]
+    for i in range(0, len(ferry_plans_sorted), cols_per_row):
+        row_plans = ferry_plans_sorted[i:i+cols_per_row]
         row_cols = st.columns(cols_per_row)
         for col_idx, fp in enumerate(row_plans):
             with row_cols[col_idx]:
@@ -425,4 +428,4 @@ with st.expander("📋 所有计划列表"):
     st.dataframe(df_list, use_container_width=True)
 
 st.markdown("---")
-st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，在“调机计划管理”中可编辑或删除调机计划。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
+st.caption("📌 使用说明：上传Excel后点击“解析并导入”，系统自动匹配日期（原始日期在7天内则自动对应，否则放入今天），并添加所有计划。机场名称优先使用Excel中的“出发城市”和“到达城市”列。支持手动添加单条计划。调机计划以红色背景显示，可勾选“隐藏调机计划”简化视图。点击计划下方的✈️下拉框可移动计划，在“调机计划管理”中可编辑或删除调机计划（已按日期排序）。右上角显示7天内调机和载客计划的段数及飞行时间总和。")
