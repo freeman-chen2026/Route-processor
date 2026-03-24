@@ -49,10 +49,7 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def map_city(city_name):
-    """
-    根据城市名返回境内/境外标识和具体值。
-    返回格式: (zone, region, need_third, province, district)
-    """
+    """根据城市名返回境内/境外标识和具体值。返回格式: (zone, region, need_third, province, district)"""
     # 1. 先检查是否在详细映射表中
     if city_name in CITY_DETAIL_MAP:
         value = CITY_DETAIL_MAP[city_name]
@@ -114,7 +111,7 @@ def generate_js_script(df):
     # 生成 JSON 字符串（格式化）
     records_json = json.dumps(records, ensure_ascii=False, indent=4)
 
-    # 完整的 JavaScript 脚本模板（基于您最后调试成功的版本）
+    # 完整的 JavaScript 脚本模板（基于最后调试成功的版本）
     script_template = f"""// ==================== 自动生成的飞行计划填报脚本 ====================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 总计 {len(records)} 条计划
@@ -539,9 +536,11 @@ uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", t
 if uploaded_file is not None:
     try:
         df = pd.read_excel(uploaded_file)
+        # 清洗列名：去除首尾空格
+        df.columns = df.columns.str.strip()
         st.success("文件上传成功！")
         
-        # 显示数据预览
+        # 显示数据预览（前5行）
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
         
@@ -550,6 +549,7 @@ if uploaded_file is not None:
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             st.error(f"❌ 缺少必要列: {missing}")
+            st.info(f"实际列名: {list(df.columns)}")
         else:
             st.info(f"✅ 共读取 {len(df)} 条飞行计划")
             
