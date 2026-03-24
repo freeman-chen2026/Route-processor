@@ -5,13 +5,9 @@ import json
 import re
 from datetime import datetime
 
-# ---------- 基础映射（您可在此补充境内机场的区县映射） ----------
+# ---------- 基础映射（境内机场需手动补充区县） ----------
 BASE_CITY_DETAIL_MAP = {
-    # 境外城市示例（自动扩展，这里仅作参考）
-    "菲律宾马尼拉": "菲律宾",
-    "马来西亚吉隆坡": "马来西亚",
-    "日本东京": "日本",
-    "香港": "香港",
+    # 境外城市示例（会自动覆盖，无需手动维护）
     # 境内城市（必须包含省份和区县）
     "北京首都": ["北京", "顺义区"],
     "北京大兴": ["北京", "大兴区"],
@@ -20,10 +16,10 @@ BASE_CITY_DETAIL_MAP = {
     "上海浦东": ["上海", "浦东新区"],
     "重庆江北": ["重庆", "江北区"],
     "三亚凤凰": ["海南", "三亚"],
-    # 如需添加更多，请在此处补充
+    # 如需添加更多境内机场，请在此处补充
 }
 
-# 国内城市关键词（用于判断境内/境外，仅供未映射城市降级使用）
+# 国内城市关键词（用于判断境内/境外）
 DOMESTIC_KEYWORDS = [
     '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
     '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
@@ -51,19 +47,24 @@ def build_full_city_map(df):
         cities.add(dep)
         cities.add(arr)
 
-    full_map = BASE_CITY_DETAIL_MAP.copy()
+    full_map = {}
+    # 先添加基础映射中的境内城市（数组格式）
+    for k, v in BASE_CITY_DETAIL_MAP.items():
+        if isinstance(v, list):
+            full_map[k] = v
+
     for city in cities:
-        if city in full_map:
+        # 如果已经存在且是数组，说明是境内城市，保留
+        if city in full_map and isinstance(full_map[city], list):
             continue
         # 判断是否为境内城市
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 境内城市：尝试提取省份（第一个词），区县留空（脚本会降级选择第二个选项）
+            # 境内城市：提取第一个词作为省份，区县留空（脚本会降级选择第二个选项）
             province = city.split()[0] if city.split() else city
-            full_map[city] = [province, ""]  # 使用数组格式
+            full_map[city] = [province, ""]
         else:
-            # 境外城市：取第一个词作为国家名（按空格或短横线分割）
-            # 例如 "新西兰皇后镇" -> "新西兰"
+            # 境外城市：取第一个词作为国家名
             country = city.split()[0] if city.split() else city
             full_map[city] = country
     return full_map
@@ -96,7 +97,6 @@ def generate_flight_records(df):
 
 def generate_js_script(flight_records_json, city_map_json):
     """生成最终 JavaScript 脚本（嵌入动态映射和数据）"""
-    # 用户提供的原始脚本（已移除固定映射和固定数据，使用占位符）
     template = """
 // ==================== 自动生成的飞行计划填报脚本 ====================
 // 生成时间: __DATETIME__
@@ -560,7 +560,6 @@ async function processRecord(record) {
     console.log("所有计划处理完毕");
 })();
 """
-    # 替换占位符
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     count = len(json.loads(flight_records_json))
     final_script = template.replace("__DATETIME__", now)
@@ -574,7 +573,6 @@ st.set_page_config(page_title="飞行计划自动填报代码生成器", layout=
 st.title("✈️ 飞行计划自动填报代码生成器")
 st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**自动识别境外城市并映射到国家名**）")
 
-# 侧边栏配置
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
                                      help="Excel 中实际列名所在的行索引（第一行为0）。通常您的文件第二行是列名，因此输入 1。")
@@ -583,11 +581,8 @@ uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", t
 
 if uploaded_file is not None:
     try:
-        # 读取 Excel，指定标题行
         df = pd.read_excel(uploaded_file, header=header_row)
-        # 清洗列名：去除首尾空格
         df.columns = df.columns.str.strip()
-        # 删除全空行（可选）
         df = df.dropna(how='all')
         st.success("文件上传成功！")
         st.subheader("📊 数据预览（前5行）")
@@ -603,16 +598,12 @@ if uploaded_file is not None:
 
             if st.button("🚀 生成 JavaScript 脚本"):
                 with st.spinner("正在构建城市映射并生成脚本..."):
-                    # 构建完整城市映射
                     full_map = build_full_city_map(df)
                     city_map_json = json.dumps(full_map, ensure_ascii=False, indent=4)
-                    # 生成飞行记录 JSON
                     flight_records_json = generate_flight_records(df)
-                    # 显示映射预览（帮助调试）
                     st.subheader("🔍 城市映射预览（前10个）")
                     preview_map = {k: v for k, v in list(full_map.items())[:10]}
                     st.json(preview_map)
-                    # 生成最终脚本
                     final_script = generate_js_script(flight_records_json, city_map_json)
                     st.success("脚本生成成功！")
                     st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
