@@ -577,13 +577,21 @@ st.set_page_config(page_title="飞行计划自动填报代码生成器", layout=
 st.title("✈️ 飞行计划自动填报代码生成器")
 st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**自动识别境外城市并映射到国家名**）")
 
+# 侧边栏配置
+st.sidebar.header("文件读取配置")
+header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
+                                     help="Excel 中实际列名所在的行索引（第一行为0）。通常您的文件第二行是列名，因此输入 1。")
+
 uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
+        # 读取 Excel，指定标题行
+        df = pd.read_excel(uploaded_file, header=header_row)
         # 清洗列名：去除首尾空格
         df.columns = df.columns.str.strip()
+        # 删除全空行（可选）
+        df = df.dropna(how='all')
         st.success("文件上传成功！")
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
