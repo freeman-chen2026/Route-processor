@@ -540,7 +540,7 @@ def generate_flight_records(df):
         purpose_raw = row.get("用途", "")
         purpose = "调机" if "调机" in purpose_raw else "自用飞行"
 
-        # 日期处理（直接使用字符串，原脚本 pd.to_datetime 可处理）
+        # 日期处理（直接使用字符串）
         start_date = str(row["出发日期"])
         end_date = str(row["到达日期"])
 
@@ -552,7 +552,7 @@ def generate_flight_records(df):
         dep_city_raw = row["出发城市"]
         arr_city_raw = row["到达城市"]
 
-        # 注册号（保持原样，原脚本的 formatRegNumber 会处理）
+        # 注册号
         reg_raw = row["飞机注册号"]
 
         record = {
@@ -567,7 +567,6 @@ def generate_flight_records(df):
         }
         records.append(record)
 
-    # 生成 JSON 字符串，保持缩进（与原脚本格式一致）
     return json.dumps(records, ensure_ascii=False, indent=4)
 
 # ---------- Streamlit UI ----------
@@ -579,32 +578,36 @@ uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", t
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
-        # 清洗列名：去除首尾空格
+        # 读取 Excel，跳过第一行空行，将第二行作为表头
+        df = pd.read_excel(uploaded_file, header=1)
+        # 去除列名中的空格
         df.columns = df.columns.str.strip()
+        
         st.success("文件上传成功！")
         
         # 显示数据预览
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
         
-        # 检查必要列
+        # 检查必要列（列名可能包含空格，但已去除）
         required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             st.error(f"❌ 缺少必要列: {missing}")
             st.info(f"实际列名: {list(df.columns)}")
+            # 如果列名是中文但可能有前缀，提供手动选择表头行的选项
+            if st.button("尝试重新读取（使用第一行作为表头）"):
+                df = pd.read_excel(uploaded_file, header=0)
+                df.columns = df.columns.str.strip()
+                st.rerun()
         else:
             st.info(f"✅ 共读取 {len(df)} 条飞行计划")
             
             # 生成脚本
             if st.button("🚀 生成 JavaScript 脚本"):
                 with st.spinner("正在生成脚本..."):
-                    # 生成新的 flightRecords 数组
                     new_records_json = generate_flight_records(df)
-                    # 替换占位符
                     final_script = ORIGINAL_SCRIPT.replace("__FLIGHT_RECORDS_PLACEHOLDER__", new_records_json)
-                    # 添加生成时间注释（可选）
                     final_script = f"// 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{final_script}"
                     st.success("脚本生成成功！")
                     st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
@@ -612,6 +615,7 @@ if uploaded_file is not None:
                     st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
+        st.exception(e)
 else:
     st.info("请上传 Excel 文件开始")
 
