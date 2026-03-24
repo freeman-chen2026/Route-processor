@@ -131,7 +131,8 @@ CITY_TO_PROVINCE = {
 # 中国境内城市关键词（用于判断境内/境外，自动生成）
 DOMESTIC_KEYWORDS = list(CITY_TO_PROVINCE.keys())
 
-# 默认境内机场详细映射（仅用于需要精确区县的特殊情况，如北京首都需选顺义区）
+# 默认境内机场详细映射（用于需要精确区县的特殊情况，如北京首都需选顺义区）
+# 这些会覆盖自动提取的区县，如需自动识别可留空或删除
 DEFAULT_DETAIL_MAP = {
     "北京首都": {"province": "北京", "district": "顺义区"},
     "北京大兴": {"province": "北京", "district": "大兴区"},
@@ -139,7 +140,6 @@ DEFAULT_DETAIL_MAP = {
     "上海虹桥": {"province": "上海", "district": "闵行区"},
     "上海浦东": {"province": "上海", "district": "浦东新区"},
     "重庆江北": {"province": "重庆", "district": "江北区"},
-    # 其他机场无需添加，会自动处理
 }
 
 def parse_flight_time(time_str):
@@ -167,7 +167,11 @@ def get_province_from_city(city):
     return city.split()[0] if city.split() else city
 
 def extract_district_from_city(city):
-    """从城市名中提取区县名（取第一个词，并去掉可能的'机场'后缀）"""
+    """从城市名中提取区县名：优先匹配CITY_TO_PROVINCE中的关键词，取第一个匹配的关键词"""
+    for keyword in CITY_TO_PROVINCE.keys():
+        if keyword in city:
+            return keyword
+    # 未匹配到，取第一个词并去掉“机场”后缀
     district = city.split()[0] if city.split() else city
     if district.endswith('机场'):
         district = district[:-2]
@@ -185,12 +189,14 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
+        # 如果已存在详细映射，直接使用
         if city in detail_map:
             province = detail_map[city]["province"]
             district = detail_map[city]["district"]
             city_map[city] = province
             continue
 
+        # 判断境内
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
             province = get_province_from_city(city)
@@ -200,6 +206,7 @@ def build_city_mappings(df, custom_detail_map):
         else:
             country = extract_country(city)
             city_map[city] = country
+            # 境外城市不加入 detail_map
 
     return city_map, detail_map
 
@@ -463,27 +470,13 @@ async function fillSegmentSelects(container, city) {
         }
     }
     
-    // 如果匹配失败，尝试用城市名的第一个词再次匹配（如“泉州晋江” -> “泉州”）
-    if (targetIndex === -1) {
-        const firstWord = city.split(/[\\s\\-]/)[0];
-        if (firstWord !== detail.district) {
-            console.log(`使用城市名第一个词“${firstWord}”再次尝试匹配...`);
-            for (let i = 0; i < thirdSelect.options.length; i++) {
-                if (thirdSelect.options[i].text.includes(firstWord)) {
-                    targetIndex = i;
-                    break;
-                }
-            }
-        }
-    }
-    
     if (targetIndex !== -1) {
         thirdSelect.selectedIndex = targetIndex;
         thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
         console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
     } else {
         console.warn(`未找到区县选项: ${detail.district}，请手动选择或补充映射。`);
-        // 不再自动选择第二个选项，保持当前选择（通常为“请选择”）
+        // 不再自动选择
     }
     await sleep(500);
     return true;
@@ -765,7 +758,7 @@ async function processRecord(record) {
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
 st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别所有境内城市省份，自动匹配区县，无降级选择**）")
+st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别所有境内城市省份，自动匹配区县，无需手动补充映射**）")
 
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
@@ -811,4 +804,4 @@ else:
     st.info("请上传 Excel 文件开始")
 
 st.markdown("---")
-st.caption("本工具内置完整中国城市-省份映射表，自动提取区县名（如泉州晋江→泉州），并智能匹配第三个下拉框，匹配失败时不自动选择，仅输出警告。")
+st.caption("本工具内置完整中国城市-省份映射表，自动识别境内城市省份，并从城市名中提取关键词作为区县名，无需手动补充映射。")
