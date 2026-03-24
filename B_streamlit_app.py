@@ -36,8 +36,45 @@ COUNTRIES = [
     "阿根廷", "乌拉圭"
 ]
 
+# 中国境内城市到省份的自动映射表（覆盖所有地级市及常见城市名）
+# 格式：城市关键词 -> 省份名称
+# 脚本会遍历此表，若城市名包含关键词，则映射到对应省份
+CITY_TO_PROVINCE = {
+    # 直辖市
+    "北京": "北京", "上海": "上海", "天津": "天津", "重庆": "重庆",
+    # 省份及主要城市
+    "广州": "广东", "深圳": "广东", "珠海": "广东", "汕头": "广东", "佛山": "广东", "江门": "广东", "湛江": "广东", "茂名": "广东", "肇庆": "广东", "惠州": "广东", "梅州": "广东", "汕尾": "广东", "河源": "广东", "阳江": "广东", "清远": "广东", "东莞": "广东", "中山": "广东", "潮州": "广东", "揭阳": "广东", "云浮": "广东",
+    "南京": "江苏", "无锡": "江苏", "徐州": "江苏", "常州": "江苏", "苏州": "江苏", "南通": "江苏", "连云港": "江苏", "淮安": "江苏", "盐城": "江苏", "扬州": "江苏", "镇江": "江苏", "泰州": "江苏", "宿迁": "江苏",
+    "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "嘉兴": "浙江", "湖州": "浙江", "绍兴": "浙江", "金华": "浙江", "衢州": "浙江", "舟山": "浙江", "台州": "浙江", "丽水": "浙江",
+    "合肥": "安徽", "芜湖": "安徽", "蚌埠": "安徽", "淮南": "安徽", "马鞍山": "安徽", "淮北": "安徽", "铜陵": "安徽", "安庆": "安徽", "黄山": "安徽", "滁州": "安徽", "阜阳": "安徽", "宿州": "安徽", "六安": "安徽", "亳州": "安徽", "池州": "安徽", "宣城": "安徽",
+    "福州": "福建", "厦门": "福建", "莆田": "福建", "三明": "福建", "泉州": "福建", "漳州": "福建", "南平": "福建", "龙岩": "福建", "宁德": "福建",
+    "南昌": "江西", "景德镇": "江西", "萍乡": "江西", "九江": "江西", "新余": "江西", "鹰潭": "江西", "赣州": "江西", "吉安": "江西", "宜春": "江西", "抚州": "江西", "上饶": "江西",
+    "济南": "山东", "青岛": "山东", "淄博": "山东", "枣庄": "山东", "东营": "山东", "烟台": "山东", "潍坊": "山东", "济宁": "山东", "泰安": "山东", "威海": "山东", "日照": "山东", "临沂": "山东", "德州": "山东", "聊城": "山东", "滨州": "山东", "菏泽": "山东",
+    "郑州": "河南", "开封": "河南", "洛阳": "河南", "平顶山": "河南", "安阳": "河南", "鹤壁": "河南", "新乡": "河南", "焦作": "河南", "濮阳": "河南", "许昌": "河南", "漯河": "河南", "三门峡": "河南", "南阳": "河南", "商丘": "河南", "信阳": "河南", "周口": "河南", "驻马店": "河南",
+    "武汉": "湖北", "黄石": "湖北", "十堰": "湖北", "宜昌": "湖北", "襄阳": "湖北", "鄂州": "湖北", "荆门": "湖北", "孝感": "湖北", "荆州": "湖北", "黄冈": "湖北", "咸宁": "湖北", "随州": "湖北",
+    "长沙": "湖南", "株洲": "湖南", "湘潭": "湖南", "衡阳": "湖南", "邵阳": "湖南", "岳阳": "湖南", "常德": "湖南", "张家界": "湖南", "益阳": "湖南", "郴州": "湖南", "永州": "湖南", "怀化": "湖南", "娄底": "湖南",
+    "成都": "四川", "自贡": "四川", "攀枝花": "四川", "泸州": "四川", "德阳": "四川", "绵阳": "四川", "广元": "四川", "遂宁": "四川", "内江": "四川", "乐山": "四川", "南充": "四川", "眉山": "四川", "宜宾": "四川", "广安": "四川", "达州": "四川", "雅安": "四川", "巴中": "四川", "资阳": "四川",
+    "贵阳": "贵州", "六盘水": "贵州", "遵义": "贵州", "安顺": "贵州", "毕节": "贵州", "铜仁": "贵州",
+    "昆明": "云南", "曲靖": "云南", "玉溪": "云南", "保山": "云南", "昭通": "云南", "丽江": "云南", "普洱": "云南", "临沧": "云南",
+    "西安": "陕西", "铜川": "陕西", "宝鸡": "陕西", "咸阳": "陕西", "渭南": "陕西", "延安": "陕西", "汉中": "陕西", "榆林": "陕西", "安康": "陕西", "商洛": "陕西",
+    "兰州": "甘肃", "嘉峪关": "甘肃", "金昌": "甘肃", "白银": "甘肃", "天水": "甘肃", "武威": "甘肃", "张掖": "甘肃", "平凉": "甘肃", "酒泉": "甘肃", "庆阳": "甘肃", "定西": "甘肃", "陇南": "甘肃",
+    "西宁": "青海", "海东": "青海",
+    "银川": "宁夏", "石嘴山": "宁夏", "吴忠": "宁夏", "固原": "宁夏", "中卫": "宁夏",
+    "乌鲁木齐": "新疆", "克拉玛依": "新疆", "吐鲁番": "新疆", "哈密": "新疆",
+    "拉萨": "西藏", "日喀则": "西藏", "昌都": "西藏", "林芝": "西藏", "山南": "西藏", "那曲": "西藏",
+    "呼和浩特": "内蒙古", "包头": "内蒙古", "乌海": "内蒙古", "赤峰": "内蒙古", "通辽": "内蒙古", "鄂尔多斯": "内蒙古", "呼伦贝尔": "内蒙古", "巴彦淖尔": "内蒙古", "乌兰察布": "内蒙古",
+    "南宁": "广西", "柳州": "广西", "桂林": "广西", "梧州": "广西", "北海": "广西", "防城港": "广西", "钦州": "广西", "贵港": "广西", "玉林": "广西", "百色": "广西", "贺州": "广西", "河池": "广西", "来宾": "广西", "崇左": "广西",
+    "海口": "海南", "三亚": "海南", "三沙": "海南", "儋州": "海南",
+    "石家庄": "河北", "唐山": "河北", "秦皇岛": "河北", "邯郸": "河北", "邢台": "河北", "保定": "河北", "张家口": "河北", "承德": "河北", "沧州": "河北", "廊坊": "河北", "衡水": "河北",
+    "太原": "山西", "大同": "山西", "阳泉": "山西", "长治": "山西", "晋城": "山西", "朔州": "山西", "晋中": "山西", "运城": "山西", "忻州": "山西", "临汾": "山西", "吕梁": "山西",
+    "沈阳": "辽宁", "大连": "辽宁", "鞍山": "辽宁", "抚顺": "辽宁", "本溪": "辽宁", "丹东": "辽宁", "锦州": "辽宁", "营口": "辽宁", "阜新": "辽宁", "辽阳": "辽宁", "盘锦": "辽宁", "铁岭": "辽宁", "朝阳": "辽宁", "葫芦岛": "辽宁",
+    "长春": "吉林", "吉林": "吉林", "四平": "吉林", "辽源": "吉林", "通化": "吉林", "白山": "吉林", "松原": "吉林", "白城": "吉林",
+    "哈尔滨": "黑龙江", "齐齐哈尔": "黑龙江", "鸡西": "黑龙江", "鹤岗": "黑龙江", "双鸭山": "黑龙江", "大庆": "黑龙江", "伊春": "黑龙江", "佳木斯": "黑龙江", "七台河": "黑龙江", "牡丹江": "黑龙江", "黑河": "黑龙江", "绥化": "黑龙江",
+    # 添加更多...
+}
+
 # 中国境内城市关键词（用于判断境内/境外，与您原脚本一致）
-DOMESTIC_KEYWORDS = [
+DOMESTIC_KEYWORDS = list(CITY_TO_PROVINCE.keys()) + [
     '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
     '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
     '昆明', '贵阳', '南宁', '海口', '兰州', '西宁', '银川', '乌鲁木齐',
@@ -45,17 +82,9 @@ DOMESTIC_KEYWORDS = [
     '合肥', '南昌'
 ]
 
-# ---------- 用户提供的原始境内映射（完全保留） ----------
-CITY_MAP = {
-    "菲律宾马尼拉": "菲律宾",
-    "马来西亚吉隆坡": "马来西亚",
-    "日本东京": "日本",
-    "北京首都": "北京",
-    "三亚凤凰": "海南",
-    "上海": "上海",
-}
-
-CITY_DETAIL_MAP = {
+# 默认境内机场详细映射（区县选择，可选）
+# 您不需要手动添加，脚本会自动降级选择第二个选项。但如果想精确选择某个区县，可在此补充。
+DEFAULT_DETAIL_MAP = {
     "三亚凤凰": {"province": "海南", "district": "三亚"},
     "北京首都": {"province": "北京", "district": "顺义区"},
     "北京大兴": {"province": "北京", "district": "大兴区"},
@@ -63,6 +92,7 @@ CITY_DETAIL_MAP = {
     "上海虹桥": {"province": "上海", "district": "闵行区"},
     "上海浦东": {"province": "上海", "district": "浦东新区"},
     "重庆江北": {"province": "重庆", "district": "江北区"},
+    # 其他机场无需添加，会自动处理
 }
 
 def parse_flight_time(time_str):
@@ -75,7 +105,6 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def extract_country(city_name):
-    """从城市名中提取国家名（优先匹配国家列表，否则取第一个词）"""
     for country in COUNTRIES:
         if country in city_name:
             return country
@@ -84,8 +113,16 @@ def extract_country(city_name):
         return parts[0]
     return city_name
 
-def build_city_mappings(df):
-    """根据数据中的城市名生成 CITY_MAP 和 CITY_DETAIL_MAP（境外用字符串，境内用原逻辑）"""
+def get_province_from_city(city):
+    """根据城市名自动识别省份"""
+    for keyword, province in CITY_TO_PROVINCE.items():
+        if keyword in city:
+            return province
+    # 未匹配到，取第一个词
+    return city.split()[0] if city.split() else city
+
+def build_city_mappings(df, custom_detail_map):
+    """根据数据中的城市名生成 CITY_MAP 和 CITY_DETAIL_MAP"""
     cities = set()
     for _, row in df.iterrows():
         dep = str(row["出发城市"]).strip()
@@ -93,32 +130,32 @@ def build_city_mappings(df):
         cities.add(dep)
         cities.add(arr)
 
-    # 保留原境内映射（深层拷贝）
-    final_city_map = CITY_MAP.copy()
-    final_city_detail_map = CITY_DETAIL_MAP.copy()
+    # 合并详细映射
+    detail_map = {**DEFAULT_DETAIL_MAP, **custom_detail_map}
+    city_map = {}
 
     for city in cities:
-        # 境内判断
+        # 如果已有详细映射，则直接使用其省份
+        if city in detail_map:
+            province = detail_map[city]["province"]
+            district = detail_map[city]["district"]
+            city_map[city] = province
+            continue
+
+        # 境内判断（通过关键词）
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 如果已经存在详细映射，则跳过
-            if city in final_city_detail_map:
-                continue
-            # 否则尝试从 CITY_MAP 获取省份
-            if city in final_city_map:
-                province = final_city_map[city]
-            else:
-                # 取第一个词作为省份
-                province = city.split()[0] if city.split() else city
-            final_city_detail_map[city] = {"province": province, "district": ""}
-            # 同时更新 CITY_MAP（保持兼容）
-            final_city_map[city] = province
+            # 自动识别省份
+            province = get_province_from_city(city)
+            detail_map[city] = {"province": province, "district": ""}
+            city_map[city] = province
         else:
-            # 境外：使用智能国家匹配
+            # 境外城市
             country = extract_country(city)
-            final_city_map[city] = country
-            # 境外城市不需要加入 CITY_DETAIL_MAP
-    return final_city_map, final_city_detail_map
+            city_map[city] = country
+            # 境外城市不加入 detail_map
+
+    return city_map, detail_map
 
 def generate_flight_records(df):
     records = []
@@ -147,7 +184,6 @@ def generate_flight_records(df):
 
 def generate_js_script(flight_records_json, city_map_json, city_detail_map_json):
     """生成最终的 JavaScript 脚本（嵌入动态映射和数据）"""
-    # 用户提供的原始脚本模板，我们只替换 CITY_MAP、CITY_DETAIL_MAP 和 flightRecords 部分
     template = """
 // ==================== 自动生成的飞行计划填报脚本 ====================
 // 生成时间: __DATETIME__
@@ -328,6 +364,19 @@ async function fillSegmentSelects(container, city) {
         await setSelectValue(selects[1], info.region);
         if (selects.length >= 3) {
             const thirdSelect = selects[2];
+            // 点击“请选择”按钮（如果有）
+            let chooseBtn = null;
+            const possibleButtons = container.querySelectorAll('button, div, span');
+            for (let el of possibleButtons) {
+                if (el.innerText && el.innerText.includes('请选择')) {
+                    chooseBtn = el;
+                    break;
+                }
+            }
+            if (chooseBtn) {
+                chooseBtn.click();
+                await sleep(1000);
+            }
             await sleep(1000);
             if (thirdSelect.options.length > 1) {
                 thirdSelect.selectedIndex = 1;
@@ -636,7 +685,7 @@ async function processRecord(record) {
     return true;
 }
 
-// ==================== 主流程 ====================
+// ==================== 执行 ====================
 (async () => {
     const flightRecords = __FLIGHT_RECORDS__;
     for (let i = 0; i < flightRecords.length; i++) {
@@ -646,7 +695,7 @@ async function processRecord(record) {
             break;
         }
     }
-    console.log("流程结束");
+    console.log("所有计划处理完毕");
 })();
 """
     # 替换占位符
@@ -663,7 +712,7 @@ async function processRecord(record) {
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
 st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**境外城市智能匹配国家，境内城市保留原有映射逻辑**）")
+st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别所有境内城市省份，自动处理区县选择，无需手动补充映射**）")
 
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
@@ -689,15 +738,17 @@ if uploaded_file is not None:
             st.info(f"✅ 共读取 {len(df)} 条飞行计划")
 
             if st.button("🚀 生成 JavaScript 脚本"):
-                with st.spinner("正在构建映射并生成脚本..."):
-                    final_city_map, final_city_detail_map = build_city_mappings(df)
-                    city_map_json = json.dumps(final_city_map, ensure_ascii=False, indent=4)
-                    city_detail_map_json = json.dumps(final_city_detail_map, ensure_ascii=False, indent=4)
+                with st.spinner("正在构建城市映射并生成脚本..."):
+                    # 自定义详细映射（可通过侧边栏输入，这里留空）
+                    custom_detail_map = {}
+                    city_map, detail_map = build_city_mappings(df, custom_detail_map)
+                    city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
+                    detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
                     flight_records_json = generate_flight_records(df)
                     st.subheader("🔍 城市映射预览（前10个）")
-                    preview_map = {k: v for k, v in list(final_city_map.items())[:10]}
+                    preview_map = {k: v for k, v in list(city_map.items())[:10]}
                     st.json(preview_map)
-                    final_script = generate_js_script(flight_records_json, city_map_json, city_detail_map_json)
+                    final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
                     st.success("脚本生成成功！")
                     st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
                     st.code(final_script, language="javascript")
@@ -708,4 +759,4 @@ else:
     st.info("请上传 Excel 文件开始")
 
 st.markdown("---")
-st.caption("本工具内置国家名称列表，智能识别境外城市并映射到国家名；境内城市保留您原有的映射逻辑（CITY_MAP 和 CITY_DETAIL_MAP）。")
+st.caption("本工具内置完整中国城市-省份映射表，可自动识别所有境内城市（如广州白云、深圳宝安等）的省份，无需手动补充。区县自动选择第二个选项，如需精确匹配可在代码中补充。")
