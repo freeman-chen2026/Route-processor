@@ -535,32 +535,42 @@ uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", t
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
+        # 尝试用第一行作为列名
+        df = pd.read_excel(uploaded_file, header=0)
         # 清洗列名：去除首尾空格
         df.columns = df.columns.str.strip()
-        st.success("文件上传成功！")
         
-        # 显示数据预览（前5行）
-        st.subheader("📊 数据预览（前5行）")
-        st.dataframe(df.head())
-        
-        # 检查必要列
         required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]
         missing = [col for col in required_cols if col not in df.columns]
+        
+        # 如果第一行没有正确解析，尝试用第二行作为列名
+        if missing or any(col.startswith('Unnamed:') for col in df.columns):
+            st.warning("第一行未正确解析为列名，尝试使用第二行...")
+            # 重新读取，跳过第一行，用第二行作为列名
+            df = pd.read_excel(uploaded_file, header=1)
+            df.columns = df.columns.str.strip()
+            missing = [col for col in required_cols if col not in df.columns]
+        
+        # 如果仍然失败，则提示用户
         if missing:
             st.error(f"❌ 缺少必要列: {missing}")
             st.info(f"实际列名: {list(df.columns)}")
-        else:
-            st.info(f"✅ 共读取 {len(df)} 条飞行计划")
-            
-            # 生成脚本
-            if st.button("🚀 生成 JavaScript 脚本"):
-                with st.spinner("正在生成脚本..."):
-                    script = generate_js_script(df)
-                    st.success("脚本生成成功！")
-                    st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
-                    st.code(script, language="javascript")
-                    st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
+            st.stop()
+        
+        st.success("文件上传成功！")
+        st.subheader("📊 数据预览（前5行）")
+        st.dataframe(df.head())
+        
+        st.info(f"✅ 共读取 {len(df)} 条飞行计划")
+        
+        # 生成脚本
+        if st.button("🚀 生成 JavaScript 脚本"):
+            with st.spinner("正在生成脚本..."):
+                script = generate_js_script(df)
+                st.success("脚本生成成功！")
+                st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
+                st.code(script, language="javascript")
+                st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
 else:
