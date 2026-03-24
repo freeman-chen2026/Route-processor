@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime
 
-# ---------- 内置国家名称列表（用于识别境外城市） ----------
+# ---------- 内置国家名称列表（用于智能识别境外城市） ----------
 COUNTRIES = [
     "香港", "澳门", "台湾", "蒙古", "朝鲜", "韩国", "日本", "菲律宾", "越南", "老挝",
     "柬埔寨", "缅甸", "泰国", "马来西亚", "文莱", "新加坡", "印度尼西亚", "东帝汶",
@@ -36,31 +36,36 @@ COUNTRIES = [
     "阿根廷", "乌拉圭"
 ]
 
-# 中国境内城市关键词（用于判断境内/境外）
+# 中国境内城市关键词（用于判断境内/境外，与您原脚本一致）
 DOMESTIC_KEYWORDS = [
     '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
     '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
     '昆明', '贵阳', '南宁', '海口', '兰州', '西宁', '银川', '乌鲁木齐',
     '拉萨', '呼和浩特', '哈尔滨', '长春', '沈阳', '石家庄', '太原', '济南',
-    '合肥', '南昌', '河北', '山西', '辽宁', '吉林', '黑龙江', '江苏', '浙江',
-    '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东', '海南',
-    '四川', '贵州', '云南', '陕西', '甘肃', '青海', '内蒙古', '广西', '宁夏',
-    '新疆', '西藏'
+    '合肥', '南昌'
 ]
 
-# 境内机场的区县映射（可根据需要补充，未提供时脚本会降级选择第二个选项）
-DISTRICT_MAP = {
-    "北京首都": "顺义区",
-    "北京大兴": "大兴区",
-    "天津滨海": "滨海新区",
-    "上海虹桥": "闵行区",
-    "上海浦东": "浦东新区",
-    "重庆江北": "江北区",
-    "三亚凤凰": "三亚",
+# ---------- 用户提供的原始境内映射（完全保留） ----------
+CITY_MAP = {
+    "菲律宾马尼拉": "菲律宾",
+    "马来西亚吉隆坡": "马来西亚",
+    "日本东京": "日本",
+    "北京首都": "北京",
+    "三亚凤凰": "海南",
+    "上海": "上海",
+}
+
+CITY_DETAIL_MAP = {
+    "三亚凤凰": {"province": "海南", "district": "三亚"},
+    "北京首都": {"province": "北京", "district": "顺义区"},
+    "北京大兴": {"province": "北京", "district": "大兴区"},
+    "天津滨海": {"province": "天津", "district": "滨海新区"},
+    "上海虹桥": {"province": "上海", "district": "闵行区"},
+    "上海浦东": {"province": "上海", "district": "浦东新区"},
+    "重庆江北": {"province": "重庆", "district": "江北区"},
 }
 
 def parse_flight_time(time_str):
-    """将 "HH:MM" 格式的时间字符串拆分为小时和分钟整数"""
     try:
         parts = time_str.split(':')
         hours = int(parts[0])
@@ -71,18 +76,16 @@ def parse_flight_time(time_str):
 
 def extract_country(city_name):
     """从城市名中提取国家名（优先匹配国家列表，否则取第一个词）"""
-    # 先尝试匹配国家列表中的名称
     for country in COUNTRIES:
         if country in city_name:
             return country
-    # 未匹配到，取第一个词（按空格或短横线分割）
     parts = re.split(r'[\s\-]', city_name)
     if parts:
         return parts[0]
     return city_name
 
-def build_city_map(df):
-    """根据数据中的城市名自动生成映射"""
+def build_city_mappings(df):
+    """根据数据中的城市名生成 CITY_MAP 和 CITY_DETAIL_MAP（境外用字符串，境内用原逻辑）"""
     cities = set()
     for _, row in df.iterrows():
         dep = str(row["出发城市"]).strip()
@@ -90,24 +93,34 @@ def build_city_map(df):
         cities.add(dep)
         cities.add(arr)
 
-    city_map = {}
+    # 保留原境内映射（深层拷贝）
+    final_city_map = CITY_MAP.copy()
+    final_city_detail_map = CITY_DETAIL_MAP.copy()
+
     for city in cities:
-        # 判断是否为境内城市
+        # 境内判断
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 境内城市：提取第一个词作为省份
-            province = city.split()[0] if city.split() else city
-            # 若有区县映射则使用，否则留空（脚本将降级选择第二个选项）
-            district = DISTRICT_MAP.get(city, "")
-            city_map[city] = [province, district]
+            # 如果已经存在详细映射，则跳过
+            if city in final_city_detail_map:
+                continue
+            # 否则尝试从 CITY_MAP 获取省份
+            if city in final_city_map:
+                province = final_city_map[city]
+            else:
+                # 取第一个词作为省份
+                province = city.split()[0] if city.split() else city
+            final_city_detail_map[city] = {"province": province, "district": ""}
+            # 同时更新 CITY_MAP（保持兼容）
+            final_city_map[city] = province
         else:
-            # 境外城市：提取国家名
+            # 境外：使用智能国家匹配
             country = extract_country(city)
-            city_map[city] = country
-    return city_map
+            final_city_map[city] = country
+            # 境外城市不需要加入 CITY_DETAIL_MAP
+    return final_city_map, final_city_detail_map
 
 def generate_flight_records(df):
-    """从 DataFrame 生成 flightRecords 的 JSON 字符串"""
     records = []
     for _, row in df.iterrows():
         purpose_raw = row.get("用途", "")
@@ -132,8 +145,9 @@ def generate_flight_records(df):
         records.append(record)
     return json.dumps(records, ensure_ascii=False, indent=4)
 
-def generate_js_script(flight_records_json, city_map_json):
+def generate_js_script(flight_records_json, city_map_json, city_detail_map_json):
     """生成最终的 JavaScript 脚本（嵌入动态映射和数据）"""
+    # 用户提供的原始脚本模板，我们只替换 CITY_MAP、CITY_DETAIL_MAP 和 flightRecords 部分
     template = """
 // ==================== 自动生成的飞行计划填报脚本 ====================
 // 生成时间: __DATETIME__
@@ -209,25 +223,31 @@ async function ensureListPage() {
     }
 }
 
-// ==================== 城市详细映射表（自动生成） ====================
+// ==================== 城市到地区/国家的映射 ====================
+const CITY_MAP = __CITY_MAP__;
+
+// 境内机场到（省份，区县）的详细映射
 const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
 
 function getLocationInfo(city) {
-    const info = CITY_DETAIL_MAP[city];
-    if (!info) {
-        console.warn(`未找到城市映射: ${city}，将使用降级处理`);
-        const parts = city.split(/[\\s\\-]/);
-        const country = parts[0];
+    const domesticKeywords = __DOMESTIC_KEYWORDS__;
+    const isDomestic = domesticKeywords.some(keyword => city.includes(keyword));
+    
+    if (isDomestic) {
+        let region = CITY_MAP[city];
+        if (!region) {
+            const match = city.match(/^([^\\s\\-]+)/);
+            region = match ? match[1] : city;
+        }
+        return { zone: "境内", region: region, needThirdSelect: true };
+    } else {
+        let country = CITY_MAP[city];
+        if (!country) {
+            const parts = city.split(/[\\s\\-]/);
+            country = parts[0];
+        }
         return { zone: "境外", region: country, needThirdSelect: false };
     }
-    if (typeof info === 'string') {
-        return { zone: "境外", region: info, needThirdSelect: false };
-    } else if (Array.isArray(info) && info.length >= 1) {
-        const province = info[0];
-        const district = info[1] || null;
-        return { zone: "境内", region: province, needThirdSelect: true, district: district };
-    }
-    return { zone: "境外", region: city, needThirdSelect: false };
 }
 
 // ==================== 选择器 ====================
@@ -286,7 +306,7 @@ function setDateInput(inputEl, dateStr) {
     return true;
 }
 
-// 通用航段填充函数
+// 通用航段填充函数（最终改进版）
 async function fillSegmentSelects(container, city) {
     const selects = container.querySelectorAll('select');
     if (selects.length < 2) {
@@ -301,31 +321,68 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
-    // 境内
-    await setSelectValue(selects[0], "境内");
-    await setSelectValue(selects[1], info.region);
-    
-    if (selects.length >= 3 && info.district) {
-        await sleep(1500);
-        const newSelects = container.querySelectorAll('select');
-        const thirdSelect = newSelects[2];
-        let targetIndex = -1;
-        for (let i = 0; i < thirdSelect.options.length; i++) {
-            if (thirdSelect.options[i].text.includes(info.district)) {
-                targetIndex = i;
-                break;
+    const detail = CITY_DETAIL_MAP[city];
+    if (!detail) {
+        console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
+        await setSelectValue(selects[0], "境内");
+        await setSelectValue(selects[1], info.region);
+        if (selects.length >= 3) {
+            const thirdSelect = selects[2];
+            await sleep(1000);
+            if (thirdSelect.options.length > 1) {
+                thirdSelect.selectedIndex = 1;
+                thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log(`已选择第三个下拉框的第二个选项: ${thirdSelect.options[1].text}`);
+            } else {
+                console.warn('第三个下拉框选项不足');
             }
         }
-        if (targetIndex !== -1) {
-            thirdSelect.selectedIndex = targetIndex;
-            thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
-        } else if (thirdSelect.options.length > 1) {
+        return true;
+    }
+    
+    // 设置境内和省份
+    await setSelectValue(selects[0], "境内");
+    await setSelectValue(selects[1], detail.province);
+    
+    // 等待1.5秒，让第三个下拉框的选项加载
+    console.log(`等待第三个下拉框选项加载 (${detail.district})...`);
+    await sleep(1500);
+    
+    // 重新获取第三个下拉框元素（因为页面可能动态更新）
+    const newSelects = container.querySelectorAll('select');
+    if (newSelects.length < 3) {
+        console.warn('重新获取后第三个下拉框不存在');
+        return false;
+    }
+    const thirdSelect = newSelects[2];
+    
+    // 打印选项列表，便于调试
+    console.log('第三个下拉框当前选项:', Array.from(thirdSelect.options).map(o => o.text));
+    
+    // 尝试匹配目标区县
+    let targetIndex = -1;
+    for (let i = 0; i < thirdSelect.options.length; i++) {
+        if (thirdSelect.options[i].text.includes(detail.district)) {
+            targetIndex = i;
+            break;
+        }
+    }
+    
+    if (targetIndex !== -1) {
+        thirdSelect.selectedIndex = targetIndex;
+        thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
+    } else {
+        console.warn(`未找到区县选项: ${detail.district}，将选择第二个选项`);
+        if (thirdSelect.options.length > 1) {
             thirdSelect.selectedIndex = 1;
             thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
             console.log(`已选择第三个下拉框的第二个选项: ${thirdSelect.options[1].text}`);
+        } else {
+            console.warn('第三个下拉框选项不足');
         }
     }
+    await sleep(500);
     return true;
 }
 
@@ -579,7 +636,7 @@ async function processRecord(record) {
     return true;
 }
 
-// ==================== 执行 ====================
+// ==================== 主流程 ====================
 (async () => {
     const flightRecords = __FLIGHT_RECORDS__;
     for (let i = 0; i < flightRecords.length; i++) {
@@ -589,21 +646,24 @@ async function processRecord(record) {
             break;
         }
     }
-    console.log("所有计划处理完毕");
+    console.log("流程结束");
 })();
 """
+    # 替换占位符
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     count = len(json.loads(flight_records_json))
     final_script = template.replace("__DATETIME__", now)
     final_script = final_script.replace("__COUNT__", str(count))
-    final_script = final_script.replace("__CITY_DETAIL_MAP__", city_map_json)
+    final_script = final_script.replace("__CITY_MAP__", city_map_json)
+    final_script = final_script.replace("__CITY_DETAIL_MAP__", city_detail_map_json)
+    final_script = final_script.replace("__DOMESTIC_KEYWORDS__", json.dumps(DOMESTIC_KEYWORDS))
     final_script = final_script.replace("__FLIGHT_RECORDS__", flight_records_json)
     return final_script
 
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
 st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别境外城市国家名，境内城市自动提取省份**）")
+st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**境外城市智能匹配国家，境内城市保留原有映射逻辑**）")
 
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
@@ -629,14 +689,15 @@ if uploaded_file is not None:
             st.info(f"✅ 共读取 {len(df)} 条飞行计划")
 
             if st.button("🚀 生成 JavaScript 脚本"):
-                with st.spinner("正在构建城市映射并生成脚本..."):
-                    full_map = build_city_map(df)
-                    city_map_json = json.dumps(full_map, ensure_ascii=False, indent=4)
+                with st.spinner("正在构建映射并生成脚本..."):
+                    final_city_map, final_city_detail_map = build_city_mappings(df)
+                    city_map_json = json.dumps(final_city_map, ensure_ascii=False, indent=4)
+                    city_detail_map_json = json.dumps(final_city_detail_map, ensure_ascii=False, indent=4)
                     flight_records_json = generate_flight_records(df)
                     st.subheader("🔍 城市映射预览（前10个）")
-                    preview_map = {k: v for k, v in list(full_map.items())[:10]}
+                    preview_map = {k: v for k, v in list(final_city_map.items())[:10]}
                     st.json(preview_map)
-                    final_script = generate_js_script(flight_records_json, city_map_json)
+                    final_script = generate_js_script(flight_records_json, city_map_json, city_detail_map_json)
                     st.success("脚本生成成功！")
                     st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
                     st.code(final_script, language="javascript")
@@ -647,4 +708,4 @@ else:
     st.info("请上传 Excel 文件开始")
 
 st.markdown("---")
-st.caption("本工具内置国家名称列表，自动识别境外城市并映射到国家名；境内城市根据关键词自动判断并提取省份。无需手动维护映射表。")
+st.caption("本工具内置国家名称列表，智能识别境外城市并映射到国家名；境内城市保留您原有的映射逻辑（CITY_MAP 和 CITY_DETAIL_MAP）。")
