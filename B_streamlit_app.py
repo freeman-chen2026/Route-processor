@@ -63,8 +63,7 @@ def build_full_city_map(df):
             full_map[city] = [province, ""]  # 使用数组格式
         else:
             # 境外城市：取第一个词作为国家名（按空格或短横线分割）
-            # 注意：要避免提取到括号内的内容，只取第一个单词
-            # 例如 "马来西亚吉隆坡 梳邦" -> "马来西亚"
+            # 例如 "新西兰皇后镇" -> "新西兰"
             country = city.split()[0] if city.split() else city
             full_map[city] = country
     return full_map
