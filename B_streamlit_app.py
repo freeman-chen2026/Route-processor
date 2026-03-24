@@ -6,7 +6,6 @@ import re
 from datetime import datetime
 
 # ---------- 内置国家名称列表（用于识别境外城市） ----------
-# 包含常见国家名称，可根据需要扩展
 COUNTRIES = [
     "香港", "澳门", "台湾", "蒙古", "朝鲜", "韩国", "日本", "菲律宾", "越南", "老挝",
     "柬埔寨", "缅甸", "泰国", "马来西亚", "文莱", "新加坡", "印度尼西亚", "东帝汶",
@@ -49,7 +48,7 @@ DOMESTIC_KEYWORDS = [
     '新疆', '西藏'
 ]
 
-# 境内机场的区县映射（可选，未提供时脚本会降级选择第二个选项）
+# 境内机场的区县映射（可根据需要补充，未提供时脚本会降级选择第二个选项）
 DISTRICT_MAP = {
     "北京首都": "顺义区",
     "北京大兴": "大兴区",
@@ -96,8 +95,9 @@ def build_city_map(df):
         # 判断是否为境内城市
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 境内城市：提取第一个词作为省份，区县若有映射则用，否则留空
+            # 境内城市：提取第一个词作为省份
             province = city.split()[0] if city.split() else city
+            # 若有区县映射则使用，否则留空（脚本将降级选择第二个选项）
             district = DISTRICT_MAP.get(city, "")
             city_map[city] = [province, district]
         else:
@@ -603,7 +603,7 @@ async function processRecord(record) {
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
 st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别境外城市国家名**）")
+st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别境外城市国家名，境内城市自动提取省份**）")
 
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
