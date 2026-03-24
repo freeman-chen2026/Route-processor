@@ -5,26 +5,60 @@ import json
 import re
 from datetime import datetime
 
-# ---------- 基础映射（仅包含境内机场的区县映射） ----------
-BASE_CITY_DETAIL_MAP = {
-    "北京首都": ["北京", "顺义区"],
-    "北京大兴": ["北京", "大兴区"],
-    "天津滨海": ["天津", "滨海新区"],
-    "上海虹桥": ["上海", "闵行区"],
-    "上海浦东": ["上海", "浦东新区"],
-    "重庆江北": ["重庆", "江北区"],
-    "三亚凤凰": ["海南", "三亚"],
-    # 如需添加更多境内机场，请在此处补充
-}
+# ---------- 内置国家名称列表（用于识别境外城市） ----------
+# 包含常见国家名称，可根据需要扩展
+COUNTRIES = [
+    "香港", "澳门", "台湾", "蒙古", "朝鲜", "韩国", "日本", "菲律宾", "越南", "老挝",
+    "柬埔寨", "缅甸", "泰国", "马来西亚", "文莱", "新加坡", "印度尼西亚", "东帝汶",
+    "尼泊尔", "不丹", "孟加拉国", "印度", "巴基斯坦", "斯里兰卡", "马尔代夫",
+    "哈萨克斯坦", "吉尔吉斯斯坦", "塔吉克斯坦", "乌兹别克斯坦", "土库曼斯坦",
+    "阿富汗", "伊拉克", "伊朗", "叙利亚", "约旦", "黎巴嫩", "以色列", "巴勒斯坦",
+    "沙特阿拉伯", "巴林", "卡塔尔", "科威特", "阿联酋", "阿曼", "也门", "格鲁吉亚",
+    "亚美尼亚", "阿塞拜疆", "土耳其", "塞浦路斯", "芬兰", "瑞典", "挪威", "冰岛",
+    "丹麦", "法罗群岛", "爱沙尼亚", "拉脱维亚", "立陶宛", "白俄罗斯", "俄罗斯",
+    "乌克兰", "摩尔多瓦", "波兰", "捷克", "斯洛伐克", "匈牙利", "德国", "奥地利",
+    "瑞士", "列支敦士登", "英国", "爱尔兰", "荷兰", "比利时", "卢森堡", "法国",
+    "摩纳哥", "罗马尼亚", "保加利亚", "塞尔维亚", "马其顿", "阿尔巴尼亚", "希腊",
+    "斯洛文尼亚", "克罗地亚", "波斯尼亚和墨塞哥维那", "意大利", "梵蒂冈", "圣马力诺",
+    "马耳他", "西班牙", "葡萄牙", "安道尔", "埃及", "利比亚", "苏丹", "突尼斯",
+    "阿尔及利亚", "摩洛哥", "毛里塔尼亚", "塞内加尔", "冈比亚", "马里", "布基纳法索",
+    "几内亚", "几内亚比绍", "佛得角", "塞拉利昂", "利比里亚", "科特迪瓦", "加纳",
+    "多哥", "贝宁", "尼日尔", "尼日利亚", "喀麦隆", "赤道几内亚", "乍得", "中非",
+    "苏丹", "埃塞俄比亚", "吉布提", "索马里", "肯尼亚", "乌干达", "坦桑尼亚",
+    "卢旺达", "布隆迪", "莫桑比克", "马达加斯加", "科摩罗", "毛里求斯", "塞舌尔",
+    "纳米比亚", "博茨瓦纳", "津巴布韦", "赞比亚", "马拉维", "南非", "斯威士兰",
+    "莱索托", "澳大利亚", "新西兰", "巴布亚新几内亚", "所罗门群岛", "瓦努阿图",
+    "斐济", "萨摩亚", "汤加", "密克罗尼西亚", "马绍尔群岛", "帕劳", "瑙鲁", "基里巴斯",
+    "图瓦卢", "美国", "加拿大", "墨西哥", "危地马拉", "伯利兹", "萨尔瓦多", "洪都拉斯",
+    "尼加拉瓜", "哥斯达黎加", "巴拿马", "古巴", "牙买加", "海地", "多米尼加",
+    "波多黎各", "巴哈马", "特立尼达和多巴哥", "巴巴多斯", "圣卢西亚", "圣文森特和格林纳丁斯",
+    "格林纳达", "安提瓜和巴布达", "多米尼克", "圣基茨和尼维斯", "哥伦比亚", "委内瑞拉",
+    "圭亚那", "苏里南", "厄瓜多尔", "秘鲁", "巴西", "玻利维亚", "巴拉圭", "智利",
+    "阿根廷", "乌拉圭"
+]
 
-# 国内城市关键词（用于判断境内/境外）
+# 中国境内城市关键词（用于判断境内/境外）
 DOMESTIC_KEYWORDS = [
     '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
     '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
     '昆明', '贵阳', '南宁', '海口', '兰州', '西宁', '银川', '乌鲁木齐',
     '拉萨', '呼和浩特', '哈尔滨', '长春', '沈阳', '石家庄', '太原', '济南',
-    '合肥', '南昌'
+    '合肥', '南昌', '河北', '山西', '辽宁', '吉林', '黑龙江', '江苏', '浙江',
+    '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东', '海南',
+    '四川', '贵州', '云南', '陕西', '甘肃', '青海', '内蒙古', '广西', '宁夏',
+    '新疆', '西藏'
 ]
+
+# 境内机场的区县映射（可选，未提供时脚本会降级选择第二个选项）
+DISTRICT_MAP = {
+    "北京首都": "顺义区",
+    "北京大兴": "大兴区",
+    "天津滨海": "滨海新区",
+    "上海虹桥": "闵行区",
+    "上海浦东": "浦东新区",
+    "重庆江北": "江北区",
+    "三亚凤凰": "三亚",
+}
 
 def parse_flight_time(time_str):
     """将 "HH:MM" 格式的时间字符串拆分为小时和分钟整数"""
@@ -36,8 +70,20 @@ def parse_flight_time(time_str):
     except:
         return 0, 0
 
-def build_full_city_map(df):
-    """从 DataFrame 中提取所有城市，生成完整的 CITY_DETAIL_MAP"""
+def extract_country(city_name):
+    """从城市名中提取国家名（优先匹配国家列表，否则取第一个词）"""
+    # 先尝试匹配国家列表中的名称
+    for country in COUNTRIES:
+        if country in city_name:
+            return country
+    # 未匹配到，取第一个词（按空格或短横线分割）
+    parts = re.split(r'[\s\-]', city_name)
+    if parts:
+        return parts[0]
+    return city_name
+
+def build_city_map(df):
+    """根据数据中的城市名自动生成映射"""
     cities = set()
     for _, row in df.iterrows():
         dep = str(row["出发城市"]).strip()
@@ -45,27 +91,20 @@ def build_full_city_map(df):
         cities.add(dep)
         cities.add(arr)
 
-    full_map = {}
-    # 先添加基础映射中的境内城市（数组格式）
-    for k, v in BASE_CITY_DETAIL_MAP.items():
-        if isinstance(v, list):
-            full_map[k] = v
-
+    city_map = {}
     for city in cities:
-        # 如果 city 已经在 full_map 中且是数组，说明是境内城市，跳过
-        if city in full_map and isinstance(full_map[city], list):
-            continue
         # 判断是否为境内城市
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 境内城市：提取第一个词作为省份，区县留空（脚本会降级选择第二个选项）
+            # 境内城市：提取第一个词作为省份，区县若有映射则用，否则留空
             province = city.split()[0] if city.split() else city
-            full_map[city] = [province, ""]
+            district = DISTRICT_MAP.get(city, "")
+            city_map[city] = [province, district]
         else:
-            # 境外城市：取第一个词作为国家名
-            country = city.split()[0] if city.split() else city
-            full_map[city] = country
-    return full_map
+            # 境外城市：提取国家名
+            country = extract_country(city)
+            city_map[city] = country
+    return city_map
 
 def generate_flight_records(df):
     """从 DataFrame 生成 flightRecords 的 JSON 字符串"""
@@ -94,7 +133,7 @@ def generate_flight_records(df):
     return json.dumps(records, ensure_ascii=False, indent=4)
 
 def generate_js_script(flight_records_json, city_map_json):
-    """生成最终 JavaScript 脚本（嵌入动态映射和数据）"""
+    """生成最终的 JavaScript 脚本（嵌入动态映射和数据）"""
     template = """
 // ==================== 自动生成的飞行计划填报脚本 ====================
 // 生成时间: __DATETIME__
@@ -177,16 +216,13 @@ function getLocationInfo(city) {
     const info = CITY_DETAIL_MAP[city];
     if (!info) {
         console.warn(`未找到城市映射: ${city}，将使用降级处理`);
-        // 降级：假设为境外，取第一个词
         const parts = city.split(/[\\s\\-]/);
         const country = parts[0];
         return { zone: "境外", region: country, needThirdSelect: false };
     }
     if (typeof info === 'string') {
-        // 境外城市
         return { zone: "境外", region: info, needThirdSelect: false };
     } else if (Array.isArray(info) && info.length >= 1) {
-        // 境内城市
         const province = info[0];
         const district = info[1] || null;
         return { zone: "境内", region: province, needThirdSelect: true, district: district };
@@ -270,11 +306,9 @@ async function fillSegmentSelects(container, city) {
     await setSelectValue(selects[1], info.region);
     
     if (selects.length >= 3 && info.district) {
-        // 等待1.5秒让第三个下拉框加载
         await sleep(1500);
         const newSelects = container.querySelectorAll('select');
         const thirdSelect = newSelects[2];
-        // 查找匹配的区县
         let targetIndex = -1;
         for (let i = 0; i < thirdSelect.options.length; i++) {
             if (thirdSelect.options[i].text.includes(info.district)) {
@@ -569,7 +603,7 @@ async function processRecord(record) {
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
 st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**自动识别境外城市并映射到国家名**）")
+st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别境外城市国家名**）")
 
 st.sidebar.header("文件读取配置")
 header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
@@ -596,7 +630,7 @@ if uploaded_file is not None:
 
             if st.button("🚀 生成 JavaScript 脚本"):
                 with st.spinner("正在构建城市映射并生成脚本..."):
-                    full_map = build_full_city_map(df)
+                    full_map = build_city_map(df)
                     city_map_json = json.dumps(full_map, ensure_ascii=False, indent=4)
                     flight_records_json = generate_flight_records(df)
                     st.subheader("🔍 城市映射预览（前10个）")
@@ -613,4 +647,4 @@ else:
     st.info("请上传 Excel 文件开始")
 
 st.markdown("---")
-st.caption("本工具自动识别境外城市并映射到国家名，境内城市需在基础映射中补充区县信息。如需添加新的境内机场，请修改代码中的 BASE_CITY_DETAIL_MAP。")
+st.caption("本工具内置国家名称列表，自动识别境外城市并映射到国家名；境内城市根据关键词自动判断并提取省份。无需手动维护映射表。")
