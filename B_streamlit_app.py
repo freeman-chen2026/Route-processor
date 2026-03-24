@@ -5,10 +5,8 @@ import json
 import re
 from datetime import datetime
 
-# ---------- 基础映射（境内机场需手动补充区县） ----------
+# ---------- 基础映射（仅包含境内机场的区县映射） ----------
 BASE_CITY_DETAIL_MAP = {
-    # 境外城市示例（会自动覆盖，无需手动维护）
-    # 境内城市（必须包含省份和区县）
     "北京首都": ["北京", "顺义区"],
     "北京大兴": ["北京", "大兴区"],
     "天津滨海": ["天津", "滨海新区"],
@@ -54,7 +52,7 @@ def build_full_city_map(df):
             full_map[k] = v
 
     for city in cities:
-        # 如果已经存在且是数组，说明是境内城市，保留
+        # 如果 city 已经在 full_map 中且是数组，说明是境内城市，跳过
         if city in full_map and isinstance(full_map[city], list):
             continue
         # 判断是否为境内城市
