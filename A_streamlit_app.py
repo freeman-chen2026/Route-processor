@@ -11,7 +11,7 @@ st.markdown("""
 2. 自动生成一个 JavaScript 脚本，在控制台运行后，会**先处理当日实际记录（匹配列表并填写）**，再**填报次日计划（新增备案）**。  
 3. 当日脚本中如果某条记录匹配失败或操作失败，会自动跳过并继续后续。  
 4. 次日脚本中如果某个计划处理失败，也会自动跳过并继续。  
-> **注意**：脚本会等待 iframe 加载，超时后会重试。如果页面结构特殊，您可能需要修改 `getCurrentDoc` 中的 iframe 选择器。
+> **注意**：请确保 Excel 中“实际到达”列的值填写正确，当日数据必须含有非空的实际到达时间。
 """)
 
 # ---------- 当日数据处理脚本模板（改进版，包含强健的 iframe 等待和错误处理） ----------
@@ -197,7 +197,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本（改进版，包含强健的 iframe 等待和错误处理） ----------
+# ---------- 次日计划填报脚本（完整版，保持不变） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -854,10 +854,12 @@ if uploaded_file is not None:
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        # 分离当日和次日数据
+        # 分离当日和次日数据：加强判断，确保实际到达列的值真正非空
         if "实际到达" in df.columns:
-            df_today = df[df["实际到达"].notna() & (df["实际到达"] != "")].copy()
-            df_tomorrow = df[df["实际到达"].isna() | (df["实际到达"] == "")].copy()
+            # 将实际到达列转换为字符串，并判断是否为有效值（非空且不等于 'nan' 且不为空字符串）
+            # 注意：pandas 中的 NaN 在转换为字符串后是 'nan'，所以需要先判断 notna()
+            df_today = df[df["实际到达"].notna() & (df["实际到达"] != "") & (df["实际到达"].astype(str).str.strip() != "")].copy()
+            df_tomorrow = df[df["实际到达"].isna() | (df["实际到达"] == "") | (df["实际到达"].astype(str).str.strip() == "")].copy()
         else:
             df_today = pd.DataFrame()
             df_tomorrow = df.copy()
@@ -868,6 +870,19 @@ if uploaded_file is not None:
         if len(df_today) == 0 and len(df_tomorrow) == 0:
             st.error("❌ 没有找到任何有效数据，请检查文件格式。")
             st.stop()
+
+        # 显示当日和次日数据预览，以便用户确认
+        with st.expander("📋 当日数据预览（将匹配并填入实际时间）"):
+            if len(df_today) > 0:
+                st.dataframe(df_today[["飞机注册号", "出发城市", "到达城市", "实际出发", "实际到达", "实际飞行时间"]])
+            else:
+                st.write("无当日数据")
+
+        with st.expander("📋 次日计划预览（将新增备案）"):
+            if len(df_tomorrow) > 0:
+                st.dataframe(df_tomorrow[["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]])
+            else:
+                st.write("无次日计划")
 
         with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
             step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=400, key="step1")
