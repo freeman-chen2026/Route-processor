@@ -13,7 +13,7 @@ st.markdown("""
 > **注意**：次日脚本已完整内置，当日脚本提供了极简模板，您可以根据需要修改或替换。
 """)
 
-# ---------- 当日数据处理脚本模板（极简版，确保无语法错误，所有非代码行均注释） ----------
+# ---------- 当日数据处理脚本模板（可编辑） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
@@ -31,7 +31,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本（完整内嵌，已修复正则转义） ----------
+# ---------- 次日计划填报脚本（已修复正则表达式转义） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -150,15 +150,15 @@ function getLocationInfo(city) {
     if (isDomestic) {
         let region = CITY_MAP[city];
         if (!region) {
-            // 使用 RegExp 代替字面量，避免转义问题
-            const match = city.match(new RegExp('^([^\\s\\-]+)'));
+            // 修复正则表达式转义
+            const match = city.match(new RegExp('^([^\\\\s\\\\-]+)'));
             region = match ? match[1] : city;
         }
         return { zone: "境内", region: region, needThirdSelect: true };
     } else {
         let country = CITY_MAP[city];
         if (!country) {
-            const parts = city.split(new RegExp('[\\s\\-]'));
+            const parts = city.split(new RegExp('[\\\\s\\\\-]'));
             country = parts[0];
         }
         return { zone: "境外", region: country, needThirdSelect: false };
