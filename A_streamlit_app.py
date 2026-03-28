@@ -40,11 +40,15 @@ if uploaded_file is not None:
 // 待处理计划数: {len(df_valid)}
 // =========================================================
 
-// ================= 配置区（根据实际页面调整） =================
-const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
+// ================= 配置区 =================
+// 使用 XPath 定位表格行（更可靠）
+const ROW_XPATH = '/html/body/div[1]/div/div[3]/form/div/div[2]/table/tbody[2]/tr';
+// 机号列内的 div 选择器（相对于行）
 const REG_SELECTOR = 'td:nth-child(6) div';
+// 航段列内的 div 选择器（相对于行）
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
-const DATE_SELECTOR = 'td:nth-child(9)';   // 服务开始时间列（第9列）
+// 服务开始时间列（第9列）
+const DATE_SELECTOR = 'td:nth-child(9)';
 
 // 从 Excel 提取的数据
 const excelData = {js_data};
@@ -61,17 +65,6 @@ function getRegFromRow(row) {{
     return regElement ? normalizeReg(regElement.innerText.trim()) : null;
 }}
 
-function extractKeywordsFromPart(part) {{
-    let afterPrefix = part.replace(/^(境内|境外)-/, '');
-    const segments = afterPrefix.split('-');
-    const keywords = [];
-    for (let seg of segments) {{
-        const words = seg.split(/\\s+/);
-        for (let w of words) if (w) keywords.push(w);
-    }}
-    return keywords;
-}}
-
 function getSegmentKeywords(row) {{
     const segElement = row.querySelector(SEGMENT_SELECTOR);
     if (!segElement) return null;
@@ -81,8 +74,19 @@ function getSegmentKeywords(row) {{
     if (parts.length < 2) return null;
     const depPart = parts[0].trim();
     const arrPart = parts[1].trim();
-    const depKeywords = extractKeywordsFromPart(depPart);
-    const arrKeywords = extractKeywordsFromPart(arrPart);
+    // 提取关键词（去掉“境内-”或“境外-”前缀，并处理可能的多级）
+    const extract = (part) => {{
+        let afterPrefix = part.replace(/^(境内|境外)-/, '');
+        const segments = afterPrefix.split('-');
+        const keywords = [];
+        for (let seg of segments) {{
+            const words = seg.split(/\\s+/);
+            for (let w of words) if (w) keywords.push(w);
+        }}
+        return keywords;
+    }};
+    const depKeywords = extract(depPart);
+    const arrKeywords = extract(arrPart);
     return {{ depKeywords, arrKeywords }};
 }}
 
@@ -94,18 +98,28 @@ function isMatchSegment(rowData, depKeywords, arrKeywords) {{
     return depMatch && arrMatch;
 }}
 
-// 等待表格出现
+// 使用 XPath 获取所有计划行
+function getAllRows() {{
+    const result = document.evaluate(ROW_XPATH, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    const rows = [];
+    for (let i = 0; i < result.snapshotLength; i++) {{
+        rows.push(result.snapshotItem(i));
+    }}
+    return rows;
+}}
+
+// 等待表格出现（通过检测行数）
 async function waitForTable() {{
     const start = Date.now();
     while (Date.now() - start < 10000) {{
-        const rows = document.querySelectorAll(ROW_SELECTOR);
+        const rows = getAllRows();
         if (rows.length > 0) return rows;
         await sleep(300);
     }}
     return null;
 }}
 
-// 获取第一个匹配的计划（严格匹配日期、机号、航段）
+// 获取第一个匹配的计划
 async function getFirstMatch() {{
     const rows = await waitForTable();
     if (!rows) return null;
@@ -189,7 +203,7 @@ function setNumberInput(inputEl, value) {{
     return true;
 }}
 
-// 境内/境外判断及映射（简化版，仅用城市名）
+// 境内/境外判断及映射（简化版）
 const CITY_MAP = {{ "上海虹桥": "上海", "成都双流": "四川", "哈萨克斯坦阿拉木图": "哈萨克斯坦", "香港": "香港", "贵阳龙洞堡": "贵州" }};
 
 function getLocationInfo(city) {{
@@ -206,7 +220,7 @@ function getLocationInfo(city) {{
     }}
 }}
 
-// 处理起飞/降落区块（简化版，只选择机场名称或“其它”+境外输入）
+// 处理起飞/降落区块
 async function handleAirportBlock(blockIndex, city, label) {{
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
@@ -234,7 +248,6 @@ async function handleAirportBlock(blockIndex, city, label) {{
         const otherSelected = await setSelectValue(secondSelect, '其它');
         if (!otherSelected) {{ console.error(`❌ 无法选择“其它”`); return false; }}
         await sleep(800);
-        // 境外部分：后续三个输入框（两个 select 和一个 input）
         let zoneSelectXPath, zoneSelect2XPath, airportNameInputXPath;
         if (blockIndex === 2) {{
             zoneSelectXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[1]';
@@ -297,7 +310,7 @@ async function waitForReturnToList(timeout = 300000) {{
     const start = Date.now();
     console.log('⏳ 等待您手动点击“提交”后返回列表页...');
     while (Date.now() - start < timeout) {{
-        const rows = document.querySelectorAll(ROW_SELECTOR);
+        const rows = getAllRows();
         if (rows.length > 0) {{
             console.log('✅ 已返回列表页');
             return true;
