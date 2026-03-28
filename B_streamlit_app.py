@@ -214,7 +214,11 @@ def generate_flight_records(df):
     records = []
     for _, row in df.iterrows():
         purpose_raw = row.get("用途", "")
-        purpose = "调机" if "调机" in purpose_raw else "自用飞行"
+        # 如果用途包含“维修”或“调机”，则选择“调机”，否则“自用飞行”
+        if "维修" in purpose_raw or "调机" in purpose_raw:
+            purpose = "调机"
+        else:
+            purpose = "自用飞行"
         start_date = str(row["出发日期"])
         end_date = str(row["到达日期"])
         flight_time = row.get("预计飞行时间", "")
@@ -345,7 +349,8 @@ const SELECTORS = {
     specialSelect: '#specialf',
     certSelect: '#operationCertificate',
     operateSelect: '#businessOperation',
-    purposeSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[19]/div/select[1]',
+    // 非经营活动项目下拉框（用途）— 使用用户提供的最新 XPath
+    purposeSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[13]/div/select[1]',
     startDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input',
     endDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input',
     firstFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[1]',
@@ -638,6 +643,7 @@ async function processRecord(record) {
     if (operateSelect) await setSelectValue(operateSelect, "否");
     else console.warn('未找到是否经营性作业 select');
 
+    // 用途下拉框
     const purposeSelect = await waitForElement(SELECTORS.purposeSelect, 10000, true);
     if (purposeSelect) await setSelectValue(purposeSelect, record.purpose);
     else console.warn('未找到用途下拉框');
