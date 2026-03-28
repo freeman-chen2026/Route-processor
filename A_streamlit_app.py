@@ -34,17 +34,19 @@ if uploaded_file is not None:
                     rec[k] = ""
         js_data = json.dumps(records, ensure_ascii=False, indent=4)
 
-        # 完整的 JavaScript 模板（包含所有函数）
+        # 修正后的 JavaScript 模板
         script = f"""
 // ================= 自动生成的飞行计划脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 待处理计划数: {len(df_valid)}
 // =========================================================
 
+// 表格行选择器（第二个 tbody 的 tr）
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
 const REG_SELECTOR = 'td:nth-child(6) div';
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
-const DATE_SELECTOR = 'td:nth-child(10)';   // 服务开始时间列
+// 服务开始时间列（第9列）
+const DATE_SELECTOR = 'td:nth-child(9)';
 
 // 从 Excel 提取的数据
 const excelData = {js_data};
@@ -86,24 +88,24 @@ function isMatchSegment(rowData, depKeywords, arrKeywords) {{
     const arrMatch = arrKeywords.some(kw => arrCity.includes(kw));
     return depMatch && arrMatch;
 }}
-async function getMainDoc() {{
-    const iframe = document.querySelector('#main');
-    if (!iframe) {{ console.error('未找到 #main iframe'); return null; }}
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {{ await sleep(200); doc = iframe.contentDocument; }}
-    return doc;
+
+// 获取主文档（直接使用 document）
+function getMainDoc() {{
+    return document;
 }}
+
+// 等待表格出现（在主文档中）
 async function waitForTable() {{
     const start = Date.now();
     while (Date.now() - start < 10000) {{
-        const doc = await getMainDoc();
-        if (!doc) return null;
-        const rows = doc.querySelectorAll(ROW_SELECTOR);
+        const rows = document.querySelectorAll(ROW_SELECTOR);
         if (rows.length > 0) return rows;
         await sleep(300);
     }}
     return null;
 }}
+
+// 获取第一个匹配的计划
 async function getFirstMatch() {{
     const rows = await waitForTable();
     if (!rows) return null;
@@ -131,17 +133,19 @@ async function getFirstMatch() {{
     console.log('❌ 没有找到任何匹配的计划');
     return null;
 }}
-async function waitForElementInIframe(xpath, timeout = 15000) {{
+
+// 等待元素出现（在主文档中，使用 XPath）
+async function waitForElement(xpath, timeout = 15000) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
-        const doc = await getMainDoc();
-        if (!doc) return null;
-        const el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        const el = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         if (el) return el;
         await sleep(300);
     }}
     return null;
 }}
+
+// 设置日期输入框
 function setDateInput(inputEl, dateStr) {{
     if (!inputEl) return false;
     inputEl.value = dateStr;
@@ -150,6 +154,8 @@ function setDateInput(inputEl, dateStr) {{
     inputEl.blur();
     return true;
 }}
+
+// 设置 select 选择指定文本
 async function setSelectValue(selectEl, valueText) {{
     if (!selectEl) return false;
     for (let i = 0; i < selectEl.options.length; i++) {{
@@ -165,10 +171,12 @@ async function setSelectValue(selectEl, valueText) {{
     console.warn(`⚠️ 未找到选项 "${{valueText}}"`);
     return false;
 }}
+
 function getAirportNameFromCity(city) {{
     const firstPart = city.split(/\\s+/)[0];
     return firstPart + "机场";
 }}
+
 function setNumberInput(inputEl, value) {{
     if (!inputEl) return false;
     inputEl.value = value;
@@ -177,6 +185,8 @@ function setNumberInput(inputEl, value) {{
     inputEl.blur();
     return true;
 }}
+
+// 机场映射（简单版本，可根据需要扩充）
 const CITY_MAP = {{ "上海虹桥": "上海", "成都双流": "四川", "哈萨克斯坦阿拉木图": "哈萨克斯坦", "香港": "香港", "贵阳龙洞堡": "贵州" }};
 const CITY_DETAIL_MAP = {{
     "北京首都": {{ "province": "北京", "district": "顺义区" }}, "北京大兴": {{ "province": "北京", "district": "大兴区" }},
@@ -197,6 +207,8 @@ function getLocationInfo(city) {{
         return {{ zone: "境外", region: country, needThirdSelect: false }};
     }}
 }}
+
+// 处理起飞或降落区块（直接在主文档中查找 XPath）
 async function handleAirportBlock(blockIndex, city, label) {{
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
@@ -207,17 +219,18 @@ async function handleAirportBlock(blockIndex, city, label) {{
         secondSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[1]/div/select[2]';
     }}
     console.log(`⏳ 处理 ${{label}} 区块...`);
-    const firstSelect = await waitForElementInIframe(firstSelectXPath, 10000);
+    const firstSelect = await waitForElement(firstSelectXPath, 10000);
     if (!firstSelect) {{ console.error(`❌ 未找到 ${{label}} 第一个选择框`); return false; }}
     const targetValue = blockIndex === 1 ? '起飞机场' : '降落机场';
     await setSelectValue(firstSelect, targetValue);
-    const secondSelect = await waitForElementInIframe(secondSelectXPath, 10000);
+    const secondSelect = await waitForElement(secondSelectXPath, 10000);
     if (!secondSelect) {{ console.error(`❌ 未找到 ${{label}} 第二个选择框`); return false; }}
     const info = getLocationInfo(city);
     if (info.zone === "境内") {{
         console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
         const selected = await setSelectValue(secondSelect, city);
         if (!selected) {{ console.error(`❌ 未找到匹配的机场选项`); return false; }}
+        // 境内机场选择完成后，无需后续填充
         return true;
     }} else {{
         console.log(`🛫 ${{label}} 境外机场: ${{city}}，选择“其它”...`);
@@ -234,11 +247,11 @@ async function handleAirportBlock(blockIndex, city, label) {{
             zoneSelect2XPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[2]`;
             airportNameInputXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/input`;
         }}
-        const zoneSelect = await waitForElementInIframe(zoneSelectXPath, 10000);
+        const zoneSelect = await waitForElement(zoneSelectXPath, 10000);
         if (zoneSelect) await setSelectValue(zoneSelect, '境外');
-        const zoneSelect2 = await waitForElementInIframe(zoneSelect2XPath, 10000);
+        const zoneSelect2 = await waitForElement(zoneSelect2XPath, 10000);
         if (zoneSelect2) await setSelectValue(zoneSelect2, '境外');
-        const airportNameInput = await waitForElementInIframe(airportNameInputXPath, 10000);
+        const airportNameInput = await waitForElement(airportNameInputXPath, 10000);
         if (airportNameInput) {{
             const airportName = getAirportNameFromCity(city);
             console.log(`📝 填入 ${{label}} 机场名称: ${{airportName}}`);
@@ -247,13 +260,15 @@ async function handleAirportBlock(blockIndex, city, label) {{
         return true;
     }}
 }}
+
+// 处理第二个飞行时间（全部填0）
 async function handleSecondFlightTime() {{
     const hourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[1]';
     const minuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[2]';
     const countXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[6]/div/input';
-    const hourInput = await waitForElementInIframe(hourXPath, 10000);
-    const minuteInput = await waitForElementInIframe(minuteXPath, 10000);
-    const countInput = await waitForElementInIframe(countXPath, 10000);
+    const hourInput = await waitForElement(hourXPath, 10000);
+    const minuteInput = await waitForElement(minuteXPath, 10000);
+    const countInput = await waitForElement(countXPath, 10000);
     if (hourInput && minuteInput && countInput) {{
         console.log('⏱️ 填入第二个飞行时间: 00:00，飞行架次数: 0');
         setNumberInput(hourInput, '0');
@@ -262,9 +277,11 @@ async function handleSecondFlightTime() {{
         return true;
     }} else {{ console.warn('⚠️ 未找到第二个飞行时间输入框'); return false; }}
 }}
+
+// 处理详细作业区
 async function handleDetailArea(depCity, arrCity) {{
     const detailXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[16]/div/input';
-    const detailInput = await waitForElementInIframe(detailXPath, 10000);
+    const detailInput = await waitForElement(detailXPath, 10000);
     if (!detailInput) {{ console.error('❌ 未找到详细作业区输入框'); return false; }}
     const depAirport = depCity + "机场";
     const arrAirport = arrCity + "机场";
@@ -273,13 +290,13 @@ async function handleDetailArea(depCity, arrCity) {{
     setNumberInput(detailInput, detailText);
     return true;
 }}
+
+// 等待返回列表页（主文档中表格重新出现）
 async function waitForReturnToList(timeout = 300000) {{
     const start = Date.now();
     console.log('⏳ 等待您手动点击“提交”后返回列表页...');
     while (Date.now() - start < timeout) {{
-        const doc = await getMainDoc();
-        if (!doc) return false;
-        const rows = doc.querySelectorAll(ROW_SELECTOR);
+        const rows = document.querySelectorAll(ROW_SELECTOR);
         if (rows.length > 0) {{
             console.log('✅ 已返回列表页');
             return true;
@@ -289,6 +306,8 @@ async function waitForReturnToList(timeout = 300000) {{
     console.error('❌ 等待超时，未返回列表页');
     return false;
 }}
+
+// 处理单个计划
 async function processOnePlan(planRow, matchedExcel) {{
     console.log(`\\n🔧 开始处理计划：机号 ${{matchedExcel["飞机注册号"]}}`);
     const execBtn = planRow.querySelector('.icon-qidong, [class*="icon-qidong"]');
@@ -298,8 +317,8 @@ async function processOnePlan(planRow, matchedExcel) {{
     await sleep(2000);
     const startDateXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input';
     const endDateXPath   = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input';
-    const startInput = await waitForElementInIframe(startDateXPath);
-    const endInput   = await waitForElementInIframe(endDateXPath);
+    const startInput = await waitForElement(startDateXPath);
+    const endInput   = await waitForElement(endDateXPath);
     if (!startInput || !endInput) {{ console.error('❌ 未找到日期输入框'); return false; }}
     const startDate = matchedExcel["出发日期"];
     const endDate   = matchedExcel["到达日期"];
@@ -316,9 +335,9 @@ async function processOnePlan(planRow, matchedExcel) {{
         const flightHourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[5]/div/input[1]';
         const flightMinuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[5]/div/input[2]';
         const flightCountXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[6]/div/input';
-        const hourInput = await waitForElementInIframe(flightHourXPath, 10000);
-        const minuteInput = await waitForElementInIframe(flightMinuteXPath, 10000);
-        const countInput = await waitForElementInIframe(flightCountXPath, 10000);
+        const hourInput = await waitForElement(flightHourXPath, 10000);
+        const minuteInput = await waitForElement(flightMinuteXPath, 10000);
+        const countInput = await waitForElement(flightCountXPath, 10000);
         if (hourInput && minuteInput && countInput) {{
             const [hour, minute] = actualFlightTime.split(':');
             console.log(`⏱️ 填入第一个飞行时间: ${{hour}}:${{minute}}，飞行架次数: 1`);
@@ -337,6 +356,7 @@ async function processOnePlan(planRow, matchedExcel) {{
     }}
     return true;
 }}
+
 // ================= 主流程 =================
 (async () => {{
     console.log('🚀 开始执行自动化流程...');
@@ -352,7 +372,7 @@ async function processOnePlan(planRow, matchedExcel) {{
         const success = await processOnePlan(match.row, match.matchedExcel);
         if (!success) {{
             console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
-            const backBtn = await waitForElementInIframe('/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input', 3000);
+            const backBtn = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input', 3000);
             if (backBtn) backBtn.click();
             await sleep(2000);
         }} else {{
