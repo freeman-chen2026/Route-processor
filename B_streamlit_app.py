@@ -13,8 +13,7 @@ st.markdown("""
 > **注意**：次日脚本已完整内置，当日脚本提供了示例模板，您可以根据需要修改或替换。
 """)
 
-# ---------- 用户提供的两个脚本模板（次日脚本已完整内置，当日脚本可编辑） ----------
-# 当日数据处理脚本模板（示例，可修改）
+# ---------- 当日数据处理脚本模板（示例，可修改） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本（示例） =================
 // 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
@@ -32,7 +31,7 @@ async function processToday() {
 }
 """
 
-# 次日计划填报脚本（完整内嵌，无需修改）
+# ---------- 次日计划填报脚本（完整内嵌，已修复正则转义） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -418,9 +417,6 @@ async function processTomorrow() {
     for (let i = 0; i < flightRecords.length; i++) {
         const record = flightRecords[i];
         console.log(`开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
-        // 这里应调用您的处理逻辑，例如 processRecord(record)
-        // 由于原脚本中 processRecord 函数已定义，这里需要调用它
-        // 假设原脚本中已定义 processRecord 函数
         await processRecord(record);
     }
     console.log('🎉 次日计划填报完成！');
