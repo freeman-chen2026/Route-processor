@@ -1,5 +1,3 @@
 streamlit
 pandas
-pillow
-pytesseract
 openpyxl
