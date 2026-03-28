@@ -14,7 +14,7 @@ if uploaded_file is not None:
     st.success(f"文件加载成功，共 {len(df)} 条记录")
 
     if "实际到达" in df.columns:
-        df_valid = df[df["实际到达"].notna() & (df["实际到达"] != "")]
+        df_valid = df[df["实际到达"].notna() & (df["实际到达"].astype(str).str.strip() != "")]
         st.info(f"筛选出有实际到达时间的计划：{len(df_valid)} 条")
     else:
         st.error("Excel 中缺少“实际到达”列，请检查文件格式")
@@ -22,7 +22,7 @@ if uploaded_file is not None:
 
     st.subheader("📊 将处理的计划")
     if len(df_valid) > 0:
-        st.dataframe(df_valid[["飞机注册号", "出发城市", "到达城市", "实际飞行时间", "实际出发", "实际到达"]])
+        st.dataframe(df_valid[["飞机注册号", "出发城市", "到达城市", "实际飞行时间", "实际出发", "实际到达", "出发日期"]])
     else:
         st.warning("没有需要处理的计划（无实际到达时间）")
 
@@ -34,6 +34,7 @@ if uploaded_file is not None:
                     rec[k] = ""
         js_data = json.dumps(records, ensure_ascii=False, indent=4)
 
+        # 完整的 JavaScript 模板（包含所有函数）
         script = f"""
 // ================= 自动生成的飞行计划脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -43,6 +44,7 @@ if uploaded_file is not None:
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
 const REG_SELECTOR = 'td:nth-child(6) div';
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
+const DATE_SELECTOR = 'td:nth-child(10)';   // 服务开始时间列
 
 // 从 Excel 提取的数据
 const excelData = {js_data};
@@ -102,27 +104,32 @@ async function waitForTable() {{
     }}
     return null;
 }}
-async function findAllMatches() {{
+async function getFirstMatch() {{
     const rows = await waitForTable();
-    if (!rows) {{ console.error('❌ 未找到表格行'); return []; }}
+    if (!rows) return null;
     console.log(`📋 找到 ${{rows.length}} 个计划行，开始匹配...`);
-    const matches = [];
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
         const regNo = getRegFromRow(row);
         if (!regNo) continue;
+        const dateCell = row.querySelector(DATE_SELECTOR);
+        const webDate = dateCell ? dateCell.innerText.trim() : '';
         const keywords = getSegmentKeywords(row);
         if (!keywords) continue;
         const {{ depKeywords, arrKeywords }} = keywords;
-        console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
-        const matched = excelData.find(r => normalizeReg(r["飞机注册号"]) === regNo && isMatchSegment(r, depKeywords, arrKeywords));
+        console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，日期 ${{webDate}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
+        const matched = excelData.find(r => 
+            normalizeReg(r["飞机注册号"]) === regNo &&
+            isMatchSegment(r, depKeywords, arrKeywords) &&
+            r["出发日期"] === webDate
+        );
         if (matched) {{
-            console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}`);
-            matches.push({{ row, matchedExcel: matched }});
+            console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}`);
+            return {{ row, matchedExcel: matched }};
         }}
     }}
-    console.log(`📊 共匹配到 ${{matches.length}} 条计划`);
-    return matches;
+    console.log('❌ 没有找到任何匹配的计划');
+    return null;
 }}
 async function waitForElementInIframe(xpath, timeout = 15000) {{
     const start = Date.now();
@@ -190,10 +197,7 @@ function getLocationInfo(city) {{
         return {{ zone: "境外", region: country, needThirdSelect: false }};
     }}
 }}
-// ================= 核心：处理起飞/降落区块 =================
 async function handleAirportBlock(blockIndex, city, label) {{
-    // 起飞区块（blockIndex=1）使用正确的 XPath
-    // 降落区块（blockIndex=2）使用正确的 XPath
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
         firstSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[1]/div/select[1]';
@@ -214,7 +218,6 @@ async function handleAirportBlock(blockIndex, city, label) {{
         console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
         const selected = await setSelectValue(secondSelect, city);
         if (!selected) {{ console.error(`❌ 未找到匹配的机场选项`); return false; }}
-        // 境内机场直接选择完成，不需要后续填充
         return true;
     }} else {{
         console.log(`🛫 ${{label}} 境外机场: ${{city}}，选择“其它”...`);
@@ -223,12 +226,10 @@ async function handleAirportBlock(blockIndex, city, label) {{
         await sleep(800);
         let zoneSelectXPath, zoneSelect2XPath, airportNameInputXPath;
         if (blockIndex === 2) {{
-            // 降落区块的境外部分使用您提供的特殊 XPath
             zoneSelectXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[1]';
             zoneSelect2XPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[2]';
             airportNameInputXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/input';
         }} else {{
-            // 起飞区块的境外部分
             zoneSelectXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[1]`;
             zoneSelect2XPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[2]`;
             airportNameInputXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/input`;
@@ -246,7 +247,6 @@ async function handleAirportBlock(blockIndex, city, label) {{
         return true;
     }}
 }}
-// ================= 其他辅助函数（保持不变） =================
 async function handleSecondFlightTime() {{
     const hourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[1]';
     const minuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[2]';
@@ -337,25 +337,28 @@ async function processOnePlan(planRow, matchedExcel) {{
     }}
     return true;
 }}
+// ================= 主流程 =================
 (async () => {{
     console.log('🚀 开始执行自动化流程...');
-    const matches = await findAllMatches();
-    if (matches.length === 0) {{
-        console.error('❌ 没有找到任何匹配的计划');
-        return;
-    }}
-    for (let i = 0; i < matches.length; i++) {{
-        const {{ row, matchedExcel }} = matches[i];
-        console.log(`\\n========== 处理第 ${{i+1}}/${{matches.length}} 个匹配计划 ==========`);
-        const success = await processOnePlan(row, matchedExcel);
+    let processedCount = 0;
+    while (true) {{
+        const match = await getFirstMatch();
+        if (!match) {{
+            console.log('🎉 没有更多匹配的计划，流程结束。');
+            break;
+        }}
+        processedCount++;
+        console.log(`\\n========== 处理第 ${{processedCount}} 个匹配计划 ==========`);
+        const success = await processOnePlan(match.row, match.matchedExcel);
         if (!success) {{
-            console.error(`⚠️ 第 ${{i+1}} 个计划处理失败，跳过继续下一个...`);
+            console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
             const backBtn = await waitForElementInIframe('/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input', 3000);
             if (backBtn) backBtn.click();
             await sleep(2000);
         }} else {{
-            console.log(`✅ 第 ${{i+1}} 个计划处理完成并已返回列表页。`);
+            console.log(`✅ 第 ${{processedCount}} 个计划处理完成并已返回列表页。`);
         }}
+        await sleep(1000);
     }}
     console.log('\\n🎉 所有匹配计划处理完毕！');
 }})();
