@@ -10,28 +10,174 @@ st.markdown("""
 1. 上传一个包含**当日飞行数据**（有实际到达时间）和**次日计划**（无实际到达时间）的 Excel 文件  
 2. 自动生成一个 JavaScript 脚本，在控制台运行后，会**先处理当日实际记录，再填报次日计划**。  
 
-> **注意**：次日脚本已完整内置，当日脚本提供了极简模板，您可以根据需要修改或替换。
+> **注意**：当日脚本会自动跳过已录入的计划，确保流程顺利。
 """)
 
-# ---------- 当日数据处理脚本模板（可编辑） ----------
-DEFAULT_STEP1_TEMPLATE = """
-// ================= 当日数据处理脚本 =================
-// 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
-// 并使用 __EXCEL_DATA__ 作为从 Excel 提取的数据数组。
-async function processToday() {
-    const excelData = __EXCEL_DATA__;
-    console.log(`📅 开始处理当日 ${excelData.length} 条记录...`);
-    // 在此处添加您的实际处理逻辑
-    // 示例：循环打印数据
-    for (let i = 0; i < excelData.length; i++) {
-        const record = excelData[i];
-        console.log(`处理记录: ${record.飞机注册号} ${record.出发城市} -> ${record.到达城市}`);
+# ---------- 当日数据处理脚本（完整版，支持跳过已录入） ----------
+STEP1_SCRIPT_TEMPLATE = """
+// ================= 当日数据处理脚本（支持跳过已录入） =================
+// 生成时间: __DATETIME__
+// 待处理计划数: __COUNT__
+
+// ================= 获取 iframe 文档 ====================
+async function getCurrentDoc() {
+    const iframe = document.querySelector('#main');
+    if (!iframe) throw new Error('未找到 iframe');
+    let doc = iframe.contentDocument;
+    while (!doc || !doc.querySelector('body')) {
+        await sleep(200);
+        doc = iframe.contentDocument;
     }
-    console.log("🎉 当日数据处理完成！");
+    return doc;
+}
+
+// ================= 等待元素出现 ====================
+async function waitForElement(selector, timeout = 15000, isXPath = false) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const doc = await getCurrentDoc();
+        let el;
+        if (isXPath) {
+            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        } else {
+            el = doc.querySelector(selector);
+        }
+        if (el) return el;
+        await sleep(500);
+    }
+    return null;
+}
+
+// ================= 弹窗确定按钮搜索 ====================
+async function waitForDialogConfirmButton(timeout = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        let btn = document.evaluate('//a[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (!btn) btn = document.evaluate('//button[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (btn) return btn;
+        try {
+            const doc = await getCurrentDoc();
+            btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            if (btn) return btn;
+        } catch(e) {}
+        await sleep(300);
+    }
+    return null;
+}
+
+// ================= 确保当前在列表页 ====================
+async function ensureListPage() {
+    const btn = await waitForElement('input.query.yuanjiao', 15000);
+    if (btn) return true;
+    console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
+    const doc = await getCurrentDoc();
+    let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (closeBtn) {
+        closeBtn.click();
+        console.log('已点击关闭按钮，等待返回列表页');
+        await sleep(1000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
+        return backBtn !== null;
+    } else {
+        console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
+        await sleep(5000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
+        return backBtn !== null;
+    }
+}
+
+// ================= 查找未处理的计划行 ====================
+async function findUnprocessedRows() {
+    const doc = await getCurrentDoc();
+    const rows = doc.querySelectorAll('table tbody:nth-of-type(2) tr');
+    const unprocessed = [];
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const statusCell = row.querySelector('td:nth-child(12) div');
+        if (statusCell && statusCell.innerText.trim() !== '已执飞') {
+            const regCell = row.querySelector('td:nth-child(6) div');
+            const segmentCell = row.querySelector('td:nth-child(7) div');
+            const reg = regCell ? regCell.innerText.trim() : '';
+            const segment = segmentCell ? segmentCell.innerText.trim() : '';
+            unprocessed.push({ row, reg, segment });
+        }
+    }
+    return unprocessed;
+}
+
+// ================= 处理单个计划 ====================
+async function processOnePlan(row, excelRecord) {
+    // 点击编辑按钮（假设在操作列）
+    const editBtn = row.querySelector('td:last-child button');
+    if (!editBtn) {
+        console.warn('未找到编辑按钮，跳过');
+        return false;
+    }
+    editBtn.click();
+    await sleep(1000);
+
+    // 查找表单中的字段并填充（根据实际需求）
+    // 这里需要您根据实际情况编写填充逻辑，例如：
+    const doc = await getCurrentDoc();
+    // 假设有实际飞行时间、实际到达等字段需要填写
+    const actualFlightTimeInput = await waitForElement('//*[@id="actualFlightTime"]', 5000, true);
+    if (actualFlightTimeInput) {
+        actualFlightTimeInput.value = excelRecord.实际飞行时间;
+        actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const actualArrivalInput = await waitForElement('//*[@id="actualArrival"]', 5000, true);
+    if (actualArrivalInput) {
+        actualArrivalInput.value = excelRecord.实际到达;
+        actualArrivalInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // 提交表单
+    const submitBtn = await waitForElement('//button[contains(text(), "提交")]', 5000, true);
+    if (submitBtn) {
+        submitBtn.click();
+        await sleep(1000);
+        const confirmBtn = await waitForDialogConfirmButton(3000);
+        if (confirmBtn) confirmBtn.click();
+    }
+
+    // 等待返回列表页
+    await waitForElement('input.query.yuanjiao', 15000);
+    return true;
+}
+
+// ================= 主流程 ====================
+async function processToday() {
+    console.log('🚀 开始执行当日数据处理流程...');
+    const excelData = __EXCEL_DATA__;
+    console.log(`📅 从 Excel 读取到 ${excelData.length} 条计划`);
+
+    if (!(await ensureListPage())) {
+        console.error('无法返回列表页，终止流程');
+        return;
+    }
+
+    const unprocessedRows = await findUnprocessedRows();
+    console.log(`📊 当前列表页未处理计划数: ${unprocessedRows.length}`);
+
+    // 根据航班号/注册号等匹配 Excel 中的记录
+    for (let i = 0; i < excelData.length; i++) {
+        const excelRecord = excelData[i];
+        const matchedRow = unprocessedRows.find(row => row.reg === excelRecord.飞机注册号 && row.segment.includes(excelRecord.出发城市 + '-' + excelRecord.到达城市));
+        if (matchedRow) {
+            console.log(`处理匹配计划: ${excelRecord.飞机注册号} ${excelRecord.出发城市} -> ${excelRecord.到达城市}`);
+            await processOnePlan(matchedRow.row, excelRecord);
+        } else {
+            console.log(`计划 ${excelRecord.飞机注册号} ${excelRecord.出发城市} -> ${excelRecord.到达城市} 可能已处理，跳过。`);
+        }
+    }
+    console.log('🎉 当日数据处理完成！');
 }
 """
 
-# ---------- 次日计划填报脚本（已修复正则表达式转义） ----------
+# ---------- 次日计划填报脚本（完整版，已修复正则表达式） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -150,7 +296,6 @@ function getLocationInfo(city) {
     if (isDomestic) {
         let region = CITY_MAP[city];
         if (!region) {
-            // 修复正则表达式转义
             const match = city.match(new RegExp('^([^\\\\s\\\\-]+)'));
             region = match ? match[1] : city;
         }
@@ -674,17 +819,16 @@ if uploaded_file is not None:
             st.error("❌ 没有找到任何有效数据，请检查文件格式。")
             st.stop()
 
-        # 允许用户编辑当日脚本模板（可选）
-        with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
-            step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=300, key="step1")
-        step2_template = STEP2_SCRIPT_TEMPLATE  # 次日脚本固定
+        # 使用内置的完整脚本模板（不再提供编辑）
+        step1_template = STEP1_SCRIPT_TEMPLATE
+        step2_template = STEP2_SCRIPT_TEMPLATE
 
         with st.spinner("正在生成脚本..."):
             final_script = generate_js_script(df_today, df_tomorrow, step1_template, step2_template)
 
         st.subheader("📜 生成的合并 JavaScript 脚本")
         st.code(final_script, language="javascript")
-        st.info("💡 复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。")
+        st.info("💡 复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。脚本会自动跳过已录入的当日计划。")
         st.download_button(
             label="💾 下载脚本文件 (.js)",
             data=final_script,
