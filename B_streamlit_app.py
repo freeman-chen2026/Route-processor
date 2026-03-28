@@ -789,21 +789,21 @@ if uploaded_file is not None:
         else:
             st.info(f"✅ 共读取 {len(df)} 条飞行计划")
 
-            if st.button("🚀 生成 JavaScript 脚本"):
-                with st.spinner("正在构建城市映射并生成脚本..."):
-                    custom_detail_map = {}
-                    city_map, detail_map = build_city_mappings(df, custom_detail_map)
-                    city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
-                    detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
-                    flight_records_json = generate_flight_records(df)
-                    st.subheader("🔍 城市映射预览（前10个）")
-                    preview_map = {k: v for k, v in list(city_map.items())[:10]}
-                    st.json(preview_map)
-                    final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
-                    st.success("脚本生成成功！")
-                    st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
-                    st.code(final_script, language="javascript")
-                    st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
+            # 立即生成脚本（无需按钮）
+            with st.spinner("正在构建城市映射并生成脚本..."):
+                custom_detail_map = {}
+                city_map, detail_map = build_city_mappings(df, custom_detail_map)
+                city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
+                detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
+                flight_records_json = generate_flight_records(df)
+                st.subheader("🔍 城市映射预览（前10个）")
+                preview_map = {k: v for k, v in list(city_map.items())[:10]}
+                st.json(preview_map)
+                final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
+                st.success("脚本生成成功！")
+                st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
+                st.code(final_script, language="javascript")
+                st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
 else:
