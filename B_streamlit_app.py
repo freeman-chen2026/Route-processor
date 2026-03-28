@@ -31,7 +31,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本（完整内嵌，已修复正则转义） ----------
+# ---------- 次日计划填报脚本（完整内嵌，使用 RegExp 避免转义问题） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -150,14 +150,15 @@ function getLocationInfo(city) {
     if (isDomestic) {
         let region = CITY_MAP[city];
         if (!region) {
-            const match = city.match(/^([^\\s\\-]+)/);
+            // 使用 RegExp 代替字面量，避免转义问题
+            const match = city.match(new RegExp('^([^\\s\\-]+)'));
             region = match ? match[1] : city;
         }
         return { zone: "境内", region: region, needThirdSelect: true };
     } else {
         let country = CITY_MAP[city];
         if (!country) {
-            const parts = city.split(/[\\s\\-]/);
+            const parts = city.split(new RegExp('[\\s\\-]'));
             country = parts[0];
         }
         return { zone: "境外", region: country, needThirdSelect: false };
