@@ -349,8 +349,8 @@ const SELECTORS = {
     specialSelect: '#specialf',
     certSelect: '#operationCertificate',
     operateSelect: '#businessOperation',
-    // 非经营活动项目下拉框（用途）— 使用用户提供的最新 XPath
-    purposeSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[13]/div/select[1]',
+    // 非经营活动下拉框：使用文本定位，避免绝对路径失效
+    purposeSelect: '//*[contains(text(), "非经营活动")]/following-sibling::*//select',
     startDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input',
     endDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input',
     firstFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[1]',
