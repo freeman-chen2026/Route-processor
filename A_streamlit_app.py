@@ -10,11 +10,9 @@ st.markdown("上传每日导出的 Excel 文件，自动生成浏览器控制台
 uploaded_file = st.file_uploader("选择 Excel 文件（.xlsx）", type=["xlsx"])
 
 if uploaded_file is not None:
-    # 读取 Excel
     df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
     st.success(f"文件加载成功，共 {len(df)} 条记录")
 
-    # 筛选有“实际到达”时间的计划
     if "实际到达" in df.columns:
         df_valid = df[df["实际到达"].notna() & (df["实际到达"] != "")]
         st.info(f"筛选出有实际到达时间的计划：{len(df_valid)} 条")
@@ -22,7 +20,6 @@ if uploaded_file is not None:
         st.error("Excel 中缺少“实际到达”列，请检查文件格式")
         st.stop()
 
-    # 展示预览
     st.subheader("📊 将处理的计划")
     if len(df_valid) > 0:
         st.dataframe(df_valid[["飞机注册号", "出发城市", "到达城市", "实际飞行时间", "实际出发", "实际到达"]])
@@ -30,7 +27,6 @@ if uploaded_file is not None:
         st.warning("没有需要处理的计划（无实际到达时间）")
 
     if len(df_valid) > 0:
-        # 转换为 JS 数据
         records = df_valid.to_dict(orient="records")
         for rec in records:
             for k, v in rec.items():
@@ -38,7 +34,6 @@ if uploaded_file is not None:
                     rec[k] = ""
         js_data = json.dumps(records, ensure_ascii=False, indent=4)
 
-        # 完整的 JavaScript 模板（已修正 XPath）
         script = f"""
 // ================= 自动生成的飞行计划脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -195,41 +190,10 @@ function getLocationInfo(city) {{
         return {{ zone: "境外", region: country, needThirdSelect: false }};
     }}
 }}
-async function fillSegmentSelects(container, city) {{
-    const selects = container.querySelectorAll('select');
-    if (selects.length < 2) {{ console.warn('航段容器内 select 数量不足'); return false; }}
-    const info = getLocationInfo(city);
-    if (info.zone === "境外") {{
-        await setSelectValue(selects[0], info.zone);
-        await setSelectValue(selects[1], info.region);
-        return true;
-    }}
-    const detail = CITY_DETAIL_MAP[city];
-    if (!detail) {{
-        console.warn(`未找到城市 ${{city}} 的详细映射，使用降级处理`);
-        await setSelectValue(selects[0], "境内");
-        await setSelectValue(selects[1], info.region);
-        return true;
-    }}
-    await setSelectValue(selects[0], "境内");
-    await setSelectValue(selects[1], detail.province);
-    await sleep(1500);
-    const newSelects = container.querySelectorAll('select');
-    if (newSelects.length < 3) {{ console.warn('重新获取后第三个下拉框不存在'); return false; }}
-    const thirdSelect = newSelects[2];
-    let targetIndex = -1;
-    for (let i = 0; i < thirdSelect.options.length; i++) if (thirdSelect.options[i].text.includes(detail.district)) {{ targetIndex = i; break; }}
-    if (targetIndex !== -1) {{
-        thirdSelect.selectedIndex = targetIndex;
-        thirdSelect.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        console.log(`已选择第三个下拉框: ${{thirdSelect.options[targetIndex].text}}`);
-    }} else console.warn(`未找到区县选项: ${{detail.district}}`);
-    await sleep(500);
-    return true;
-}}
+// ================= 核心：处理起飞/降落区块 =================
 async function handleAirportBlock(blockIndex, city, label) {{
-    // 起飞区块（blockIndex=1）使用正确的 XPath（用户提供）
-    // 降落区块（blockIndex=2）使用用户提供的特殊 XPath
+    // 起飞区块（blockIndex=1）使用正确的 XPath
+    // 降落区块（blockIndex=2）使用正确的 XPath
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
         firstSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[1]/div/select[1]';
@@ -250,10 +214,8 @@ async function handleAirportBlock(blockIndex, city, label) {{
         console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
         const selected = await setSelectValue(secondSelect, city);
         if (!selected) {{ console.error(`❌ 未找到匹配的机场选项`); return false; }}
-        await sleep(800);
-        const container = secondSelect.closest('div');
-        if (!container) {{ console.error(`❌ 未找到容器`); return false; }}
-        await fillSegmentSelects(container, city);
+        // 境内机场直接选择完成，不需要后续填充
+        return true;
     }} else {{
         console.log(`🛫 ${{label}} 境外机场: ${{city}}，选择“其它”...`);
         const otherSelected = await setSelectValue(secondSelect, '其它');
@@ -261,10 +223,12 @@ async function handleAirportBlock(blockIndex, city, label) {{
         await sleep(800);
         let zoneSelectXPath, zoneSelect2XPath, airportNameInputXPath;
         if (blockIndex === 2) {{
+            // 降落区块的境外部分使用您提供的特殊 XPath
             zoneSelectXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[1]';
             zoneSelect2XPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[2]';
             airportNameInputXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/input';
         }} else {{
+            // 起飞区块的境外部分
             zoneSelectXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[1]`;
             zoneSelect2XPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[2]`;
             airportNameInputXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/input`;
@@ -279,9 +243,10 @@ async function handleAirportBlock(blockIndex, city, label) {{
             console.log(`📝 填入 ${{label}} 机场名称: ${{airportName}}`);
             setNumberInput(airportNameInput, airportName);
         }}
+        return true;
     }}
-    return true;
 }}
+// ================= 其他辅助函数（保持不变） =================
 async function handleSecondFlightTime() {{
     const hourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[1]';
     const minuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[2]';
