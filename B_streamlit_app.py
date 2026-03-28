@@ -1,4 +1,4 @@
-# streamlit_app.py (完整代码，请替换)
+# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import json
@@ -10,10 +10,11 @@ st.markdown("""
 1. 上传一个包含**当日飞行数据**（有实际到达时间）和**次日计划**（无实际到达时间）的 Excel 文件  
 2. 自动生成一个 JavaScript 脚本，在控制台运行后，会**先处理当日实际记录（匹配列表并填写）**，再**填报次日计划（新增备案）**。  
 3. 当日脚本中如果某条记录匹配失败或操作失败，会自动跳过并继续后续。  
-> **注意**：当日脚本模板提供了基于常见页面结构的匹配逻辑，您可能需要根据实际页面调整选择器（见下方“编辑当日数据处理脚本”区域）。
+4. 次日脚本中如果某个计划处理失败，也会自动跳过并继续。  
+> **注意**：脚本会等待 iframe 加载，超时后会重试。如果页面结构特殊，您可能需要修改 `getCurrentDoc` 中的 iframe 选择器。
 """)
 
-# ---------- 当日数据处理脚本模板（可编辑，包含 iframe 等待） ----------
+# ---------- 当日数据处理脚本模板（改进版，包含强健的 iframe 等待和错误处理） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
@@ -36,21 +37,18 @@ const excelData = __EXCEL_DATA__;
 // ================= 辅助函数 =================
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-async function waitForIframe(timeout = 15000) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const iframe = document.querySelector('#main');
-        if (iframe && iframe.contentDocument) {
-            return iframe.contentDocument;
-        }
-        await sleep(500);
-    }
-    throw new Error('等待 iframe 超时');
-}
-
 async function getCurrentDoc() {
-    const iframe = document.querySelector('#main');
-    if (!iframe) throw new Error('未找到 iframe');
+    // 尝试多种 iframe 选择器
+    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
+    let iframe = null;
+    for (let sel of iframeSelectors) {
+        iframe = document.querySelector(sel);
+        if (iframe) break;
+    }
+    if (!iframe) {
+        console.warn('未找到 iframe，可能是页面未加载完成，稍后重试');
+        return null;
+    }
     let doc = iframe.contentDocument;
     while (!doc || !doc.querySelector('body')) {
         await sleep(200);
@@ -63,6 +61,10 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
         const doc = await getCurrentDoc();
+        if (!doc) {
+            await sleep(500);
+            continue;
+        }
         let el;
         if (isXPath) {
             el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -72,6 +74,7 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
         if (el) return el;
         await sleep(500);
     }
+    console.warn(`等待元素超时: ${selector}`);
     return null;
 }
 
@@ -88,7 +91,8 @@ async function clickEditButton(row) {
 
 async function fillActualArrival(record) {
     const doc = await getCurrentDoc();
-    // 实际到达输入框
+    if (!doc) return false;
+    // 实际到达输入框（请根据实际页面调整）
     const actualArrivalInput = doc.querySelector('#actualArrival') || 
                                doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualArrivalInput) {
@@ -98,21 +102,21 @@ async function fillActualArrival(record) {
     } else {
         console.warn('未找到实际到达输入框，跳过该字段');
     }
-    // 实际出发输入框
+    // 实际出发输入框（可选）
     const actualDepartureInput = doc.querySelector('#actualDeparture') ||
                                  doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualDepartureInput && record.实际出发) {
         actualDepartureInput.value = record.实际出发;
         actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 实际飞行时间输入框
+    // 实际飞行时间输入框（可选）
     const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
                                   doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualFlightTimeInput && record.实际飞行时间) {
         actualFlightTimeInput.value = record.实际飞行时间;
         actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 保存按钮
+    // 提交保存按钮（请根据实际页面调整）
     const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
                       doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (submitBtn) {
@@ -142,6 +146,10 @@ async function processOnePlan(row, matchedExcel) {
 
 async function findAllMatches() {
     const doc = await getCurrentDoc();
+    if (!doc) {
+        console.warn('无法获取文档，跳过当日数据处理');
+        return [];
+    }
     const rows = doc.querySelectorAll(ROW_SELECTOR);
     const matches = [];
     for (let i = 0; i < rows.length; i++) {
@@ -166,14 +174,6 @@ async function findAllMatches() {
 
 async function processToday() {
     console.log('🚀 开始执行当日数据处理流程...');
-    // 等待 iframe 出现
-    try {
-        await waitForIframe();
-        console.log('iframe 已加载');
-    } catch (err) {
-        console.error('❌ 等待 iframe 超时，请确保页面已正确加载并重试。');
-        return;
-    }
     const matches = await findAllMatches();
     if (matches.length === 0) {
         console.warn('⚠️ 没有找到任何匹配的计划，跳过当日数据处理');
@@ -197,7 +197,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本（完整内嵌，已修复正则表达式） ----------
+# ---------- 次日计划填报脚本（改进版，包含强健的 iframe 等待和错误处理） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -205,8 +205,17 @@ STEP2_SCRIPT_TEMPLATE = """
 
 // ================= 获取最新 iframe 文档 ====================
 async function getCurrentDoc() {
-    const iframe = document.querySelector('#main');
-    if (!iframe) throw new Error('未找到 iframe');
+    // 尝试多种 iframe 选择器
+    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
+    let iframe = null;
+    for (let sel of iframeSelectors) {
+        iframe = document.querySelector(sel);
+        if (iframe) break;
+    }
+    if (!iframe) {
+        console.warn('未找到 iframe，可能是页面未加载完成');
+        return null;
+    }
     let doc = iframe.contentDocument;
     while (!doc || !doc.querySelector('body')) {
         await sleep(200);
@@ -220,6 +229,10 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
         const doc = await getCurrentDoc();
+        if (!doc) {
+            await sleep(500);
+            continue;
+        }
         let el;
         if (isXPath) {
             el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -229,6 +242,7 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
         if (el) return el;
         await sleep(500);
     }
+    console.warn(`等待元素超时: ${selector}`);
     return null;
 }
 
@@ -241,6 +255,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {
         if (btn) return btn;
         try {
             const doc = await getCurrentDoc();
+            if (!doc) continue;
             btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (btn) return btn;
@@ -256,6 +271,7 @@ async function ensureListPage() {
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getCurrentDoc();
+    if (!doc) return false;
     let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -533,6 +549,7 @@ async function selectAircraft(reg) {
         return false;
     }
     const doc = await getCurrentDoc();
+    if (!doc) return false;
     
     let span = doc.evaluate(`//span[text()='${regForSelect}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!span) {
@@ -582,12 +599,23 @@ async function processTomorrow() {
     for (let i = 0; i < flightRecords.length; i++) {
         const record = flightRecords[i];
         console.log(`开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
-        await processRecord(record);
+        try {
+            await processRecord(record);
+        } catch (err) {
+            console.error(`处理 ${record.reg} 时发生异常:`, err);
+            console.warn('跳过此条计划，继续下一条...');
+            // 尝试返回列表页
+            const backBtn = await waitForElement('input.query.yuanjiao', 5000);
+            if (backBtn) {
+                console.log('已返回列表页');
+            } else {
+                console.warn('无法返回列表页，请手动刷新后继续');
+            }
+        }
     }
     console.log('🎉 次日计划填报完成！');
 }
 
-// 原脚本中的 processRecord 函数（已从原脚本复制）
 async function processRecord(record) {
     console.log(`\\n开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
 
@@ -618,6 +646,10 @@ async function processRecord(record) {
     }
 
     const doc = await getCurrentDoc();
+    if (!doc) {
+        console.error('无法获取文档');
+        return false;
+    }
     const specialSelect = doc.querySelector(SELECTORS.specialSelect);
     if (specialSelect) await setSelectValue(specialSelect, "否");
     else console.warn('未找到是否特殊任务飞行 select');
