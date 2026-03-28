@@ -2,250 +2,43 @@
 import streamlit as st
 import pandas as pd
 import json
-import re
 from datetime import datetime
 
-# ---------- 内置国家名称列表（用于智能识别境外城市） ----------
-COUNTRIES = [
-    "香港", "澳门", "台湾", "蒙古", "朝鲜", "韩国", "日本", "菲律宾", "越南", "老挝",
-    "柬埔寨", "缅甸", "泰国", "马来西亚", "文莱", "新加坡", "印度尼西亚", "东帝汶",
-    "尼泊尔", "不丹", "孟加拉国", "印度", "巴基斯坦", "斯里兰卡", "马尔代夫",
-    "哈萨克斯坦", "吉尔吉斯斯坦", "塔吉克斯坦", "乌兹别克斯坦", "土库曼斯坦",
-    "阿富汗", "伊拉克", "伊朗", "叙利亚", "约旦", "黎巴嫩", "以色列", "巴勒斯坦",
-    "沙特阿拉伯", "巴林", "卡塔尔", "科威特", "阿联酋", "阿曼", "也门", "格鲁吉亚",
-    "亚美尼亚", "阿塞拜疆", "土耳其", "塞浦路斯", "芬兰", "瑞典", "挪威", "冰岛",
-    "丹麦", "法罗群岛", "爱沙尼亚", "拉脱维亚", "立陶宛", "白俄罗斯", "俄罗斯",
-    "乌克兰", "摩尔多瓦", "波兰", "捷克", "斯洛伐克", "匈牙利", "德国", "奥地利",
-    "瑞士", "列支敦士登", "英国", "爱尔兰", "荷兰", "比利时", "卢森堡", "法国",
-    "摩纳哥", "罗马尼亚", "保加利亚", "塞尔维亚", "马其顿", "阿尔巴尼亚", "希腊",
-    "斯洛文尼亚", "克罗地亚", "波斯尼亚和墨塞哥维那", "意大利", "梵蒂冈", "圣马力诺",
-    "马耳他", "西班牙", "葡萄牙", "安道尔", "埃及", "利比亚", "苏丹", "突尼斯",
-    "阿尔及利亚", "摩洛哥", "毛里塔尼亚", "塞内加尔", "冈比亚", "马里", "布基纳法索",
-    "几内亚", "几内亚比绍", "佛得角", "塞拉利昂", "利比里亚", "科特迪瓦", "加纳",
-    "多哥", "贝宁", "尼日尔", "尼日利亚", "喀麦隆", "赤道几内亚", "乍得", "中非",
-    "苏丹", "埃塞俄比亚", "吉布提", "索马里", "肯尼亚", "乌干达", "坦桑尼亚",
-    "卢旺达", "布隆迪", "莫桑比克", "马达加斯加", "科摩罗", "毛里求斯", "塞舌尔",
-    "纳米比亚", "博茨瓦纳", "津巴布韦", "赞比亚", "马拉维", "南非", "斯威士兰",
-    "莱索托", "澳大利亚", "新西兰", "巴布亚新几内亚", "所罗门群岛", "瓦努阿图",
-    "斐济", "萨摩亚", "汤加", "密克罗尼西亚", "马绍尔群岛", "帕劳", "瑙鲁", "基里巴斯",
-    "图瓦卢", "美国", "加拿大", "墨西哥", "危地马拉", "伯利兹", "萨尔瓦多", "洪都拉斯",
-    "尼加拉瓜", "哥斯达黎加", "巴拿马", "古巴", "牙买加", "海地", "多米尼加",
-    "波多黎各", "巴哈马", "特立尼达和多巴哥", "巴巴多斯", "圣卢西亚", "圣文森特和格林纳丁斯",
-    "格林纳达", "安提瓜和巴布达", "多米尼克", "圣基茨和尼维斯", "哥伦比亚", "委内瑞拉",
-    "圭亚那", "苏里南", "厄瓜多尔", "秘鲁", "巴西", "玻利维亚", "巴拉圭", "智利",
-    "阿根廷", "乌拉圭"
-]
+st.set_page_config(page_title="飞行计划自动化脚本生成器（当日+次日）", layout="wide")
+st.title("✈️ 飞行计划自动化脚本生成器（当日 + 次日）")
+st.markdown("""
+1. 上传一个包含**当日飞行数据**（有实际到达时间）和**次日计划**（无实际到达时间）的 Excel 文件  
+2. 自动生成一个 JavaScript 脚本，在控制台运行后，会**先处理当日实际记录，再填报次日计划**。  
 
-# 中国境内城市到省份的自动映射表（覆盖所有地级市及常见城市名）
-CITY_TO_PROVINCE = {
-    # 直辖市
-    "北京": "北京", "上海": "上海", "天津": "天津", "重庆": "重庆",
-    # 广东
-    "广州": "广东", "深圳": "广东", "珠海": "广东", "汕头": "广东", "佛山": "广东", "江门": "广东",
-    "湛江": "广东", "茂名": "广东", "肇庆": "广东", "惠州": "广东", "梅州": "广东", "汕尾": "广东",
-    "河源": "广东", "阳江": "广东", "清远": "广东", "东莞": "广东", "中山": "广东", "潮州": "广东",
-    "揭阳": "广东", "云浮": "广东",
-    # 江苏
-    "南京": "江苏", "无锡": "江苏", "徐州": "江苏", "常州": "江苏", "苏州": "江苏", "南通": "江苏",
-    "连云港": "江苏", "淮安": "江苏", "盐城": "江苏", "扬州": "江苏", "镇江": "江苏", "泰州": "江苏",
-    "宿迁": "江苏",
-    # 浙江
-    "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "嘉兴": "浙江", "湖州": "浙江", "绍兴": "浙江",
-    "金华": "浙江", "衢州": "浙江", "舟山": "浙江", "台州": "浙江", "丽水": "浙江",
-    # 安徽
-    "合肥": "安徽", "芜湖": "安徽", "蚌埠": "安徽", "淮南": "安徽", "马鞍山": "安徽", "淮北": "安徽",
-    "铜陵": "安徽", "安庆": "安徽", "黄山": "安徽", "滁州": "安徽", "阜阳": "安徽", "宿州": "安徽",
-    "六安": "安徽", "亳州": "安徽", "池州": "安徽", "宣城": "安徽",
-    # 福建
-    "福州": "福建", "厦门": "福建", "莆田": "福建", "三明": "福建", "泉州": "福建", "漳州": "福建",
-    "南平": "福建", "龙岩": "福建", "宁德": "福建",
-    # 江西
-    "南昌": "江西", "景德镇": "江西", "萍乡": "江西", "九江": "江西", "新余": "江西", "鹰潭": "江西",
-    "赣州": "江西", "吉安": "江西", "宜春": "江西", "抚州": "江西", "上饶": "江西",
-    # 山东
-    "济南": "山东", "青岛": "山东", "淄博": "山东", "枣庄": "山东", "东营": "山东", "烟台": "山东",
-    "潍坊": "山东", "济宁": "山东", "泰安": "山东", "威海": "山东", "日照": "山东", "临沂": "山东",
-    "德州": "山东", "聊城": "山东", "滨州": "山东", "菏泽": "山东",
-    # 河南
-    "郑州": "河南", "开封": "河南", "洛阳": "河南", "平顶山": "河南", "安阳": "河南", "鹤壁": "河南",
-    "新乡": "河南", "焦作": "河南", "濮阳": "河南", "许昌": "河南", "漯河": "河南", "三门峡": "河南",
-    "南阳": "河南", "商丘": "河南", "信阳": "河南", "周口": "河南", "驻马店": "河南",
-    # 湖北
-    "武汉": "湖北", "黄石": "湖北", "十堰": "湖北", "宜昌": "湖北", "襄阳": "湖北", "鄂州": "湖北",
-    "荆门": "湖北", "孝感": "湖北", "荆州": "湖北", "黄冈": "湖北", "咸宁": "湖北", "随州": "湖北",
-    # 湖南
-    "长沙": "湖南", "株洲": "湖南", "湘潭": "湖南", "衡阳": "湖南", "邵阳": "湖南", "岳阳": "湖南",
-    "常德": "湖南", "张家界": "湖南", "益阳": "湖南", "郴州": "湖南", "永州": "湖南", "怀化": "湖南",
-    "娄底": "湖南",
-    # 四川
-    "成都": "四川", "自贡": "四川", "攀枝花": "四川", "泸州": "四川", "德阳": "四川", "绵阳": "四川",
-    "广元": "四川", "遂宁": "四川", "内江": "四川", "乐山": "四川", "南充": "四川", "眉山": "四川",
-    "宜宾": "四川", "广安": "四川", "达州": "四川", "雅安": "四川", "巴中": "四川", "资阳": "四川",
-    # 贵州
-    "贵阳": "贵州", "六盘水": "贵州", "遵义": "贵州", "安顺": "贵州", "毕节": "贵州", "铜仁": "贵州",
-    # 云南
-    "昆明": "云南", "曲靖": "云南", "玉溪": "云南", "保山": "云南", "昭通": "云南", "丽江": "云南",
-    "普洱": "云南", "临沧": "云南",
-    # 陕西
-    "西安": "陕西", "铜川": "陕西", "宝鸡": "陕西", "咸阳": "陕西", "渭南": "陕西", "延安": "陕西",
-    "汉中": "陕西", "榆林": "陕西", "安康": "陕西", "商洛": "陕西",
-    # 甘肃
-    "兰州": "甘肃", "嘉峪关": "甘肃", "金昌": "甘肃", "白银": "甘肃", "天水": "甘肃", "武威": "甘肃",
-    "张掖": "甘肃", "平凉": "甘肃", "酒泉": "甘肃", "庆阳": "甘肃", "定西": "甘肃", "陇南": "甘肃",
-    # 青海
-    "西宁": "青海", "海东": "青海",
-    # 宁夏
-    "银川": "宁夏", "石嘴山": "宁夏", "吴忠": "宁夏", "固原": "宁夏", "中卫": "宁夏",
-    # 新疆
-    "乌鲁木齐": "新疆", "克拉玛依": "新疆", "吐鲁番": "新疆", "哈密": "新疆",
-    # 西藏
-    "拉萨": "西藏", "日喀则": "西藏", "昌都": "西藏", "林芝": "西藏", "山南": "西藏", "那曲": "西藏",
-    # 内蒙古
-    "呼和浩特": "内蒙古", "包头": "内蒙古", "乌海": "内蒙古", "赤峰": "内蒙古", "通辽": "内蒙古",
-    "鄂尔多斯": "内蒙古", "呼伦贝尔": "内蒙古", "巴彦淖尔": "内蒙古", "乌兰察布": "内蒙古",
-    # 广西
-    "南宁": "广西", "柳州": "广西", "桂林": "广西", "梧州": "广西", "北海": "广西", "防城港": "广西",
-    "钦州": "广西", "贵港": "广西", "玉林": "广西", "百色": "广西", "贺州": "广西", "河池": "广西",
-    "来宾": "广西", "崇左": "广西",
-    # 海南
-    "海口": "海南", "三亚": "海南", "三沙": "海南", "儋州": "海南",
-    # 河北
-    "石家庄": "河北", "唐山": "河北", "秦皇岛": "河北", "邯郸": "河北", "邢台": "河北", "保定": "河北",
-    "张家口": "河北", "承德": "河北", "沧州": "河北", "廊坊": "河北", "衡水": "河北",
-    # 山西
-    "太原": "山西", "大同": "山西", "阳泉": "山西", "长治": "山西", "晋城": "山西", "朔州": "山西",
-    "晋中": "山西", "运城": "山西", "忻州": "山西", "临汾": "山西", "吕梁": "山西",
-    # 辽宁
-    "沈阳": "辽宁", "大连": "辽宁", "鞍山": "辽宁", "抚顺": "辽宁", "本溪": "辽宁", "丹东": "辽宁",
-    "锦州": "辽宁", "营口": "辽宁", "阜新": "辽宁", "辽阳": "辽宁", "盘锦": "辽宁", "铁岭": "辽宁",
-    "朝阳": "辽宁", "葫芦岛": "辽宁",
-    # 吉林
-    "长春": "吉林", "吉林": "吉林", "四平": "吉林", "辽源": "吉林", "通化": "吉林", "白山": "吉林",
-    "松原": "吉林", "白城": "吉林",
-    # 黑龙江
-    "哈尔滨": "黑龙江", "齐齐哈尔": "黑龙江", "鸡西": "黑龙江", "鹤岗": "黑龙江", "双鸭山": "黑龙江",
-    "大庆": "黑龙江", "伊春": "黑龙江", "佳木斯": "黑龙江", "七台河": "黑龙江", "牡丹江": "黑龙江",
-    "黑河": "黑龙江", "绥化": "黑龙江",
+> **注意**：次日脚本已完整内置，当日脚本提供了示例模板，您可以根据需要修改或替换。
+""")
+
+# ---------- 用户提供的两个脚本模板（次日脚本已完整内置，当日脚本可编辑） ----------
+# 当日数据处理脚本模板（示例，可修改）
+DEFAULT_STEP1_TEMPLATE = """
+// ================= 当日数据处理脚本（示例） =================
+// 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
+// 并使用 __EXCEL_DATA__ 作为从 Excel 提取的数据数组。
+async function processToday() {
+    const excelData = __EXCEL_DATA__;
+    console.log(`📅 开始处理当日 ${excelData.length} 条记录...`);
+    // 这里应实现您的实际处理逻辑，例如：
+    for (let i = 0; i < excelData.length; i++) {
+        const record = excelData[i];
+        console.log(`处理记录: ${record.飞机注册号} ${record.出发城市} -> ${record.到达城市}`);
+        // 您的业务代码...
+    }
+    console.log("🎉 当日数据处理完成！");
 }
+"""
 
-# 中国境内城市关键词（用于判断境内/境外，自动生成）
-DOMESTIC_KEYWORDS = list(CITY_TO_PROVINCE.keys())
-
-# 默认境内机场详细映射（用于需要精确区县的特殊情况，如北京首都需选顺义区）
-# 这些会覆盖自动提取的区县，如需自动识别可留空或删除
-DEFAULT_DETAIL_MAP = {
-    "北京首都": {"province": "北京", "district": "顺义区"},
-    "北京大兴": {"province": "北京", "district": "大兴区"},
-    "天津滨海": {"province": "天津", "district": "滨海新区"},
-    "上海虹桥": {"province": "上海", "district": "闵行区"},
-    "上海浦东": {"province": "上海", "district": "浦东新区"},
-    "重庆江北": {"province": "重庆", "district": "江北区"},
-}
-
-def parse_flight_time(time_str):
-    try:
-        parts = time_str.split(':')
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        return hours, minutes
-    except:
-        return 0, 0
-
-def extract_country(city_name):
-    for country in COUNTRIES:
-        if country in city_name:
-            return country
-    parts = re.split(r'[\s\-]', city_name)
-    if parts:
-        return parts[0]
-    return city_name
-
-def get_province_from_city(city):
-    for keyword, province in CITY_TO_PROVINCE.items():
-        if keyword in city:
-            return province
-    return city.split()[0] if city.split() else city
-
-def extract_district_from_city(city):
-    """从城市名中提取区县名：优先匹配CITY_TO_PROVINCE中的关键词，取第一个匹配的关键词"""
-    for keyword in CITY_TO_PROVINCE.keys():
-        if keyword in city:
-            return keyword
-    # 未匹配到，取第一个词并去掉“机场”后缀
-    district = city.split()[0] if city.split() else city
-    if district.endswith('机场'):
-        district = district[:-2]
-    return district
-
-def build_city_mappings(df, custom_detail_map):
-    cities = set()
-    for _, row in df.iterrows():
-        dep = str(row["出发城市"]).strip()
-        arr = str(row["到达城市"]).strip()
-        cities.add(dep)
-        cities.add(arr)
-
-    detail_map = {**DEFAULT_DETAIL_MAP, **custom_detail_map}
-    city_map = {}
-
-    for city in cities:
-        # 如果已存在详细映射，直接使用
-        if city in detail_map:
-            province = detail_map[city]["province"]
-            district = detail_map[city]["district"]
-            city_map[city] = province
-            continue
-
-        # 判断境内
-        is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
-        if is_domestic:
-            province = get_province_from_city(city)
-            district = extract_district_from_city(city)
-            detail_map[city] = {"province": province, "district": district}
-            city_map[city] = province
-        else:
-            country = extract_country(city)
-            city_map[city] = country
-            # 境外城市不加入 detail_map
-
-    return city_map, detail_map
-
-def generate_flight_records(df):
-    records = []
-    for _, row in df.iterrows():
-        purpose_raw = row.get("用途", "")
-        # 如果用途包含“维修”或“调机”，则选择“调机”，否则“自用飞行”
-        if "维修" in purpose_raw or "调机" in purpose_raw:
-            purpose = "调机"
-        else:
-            purpose = "自用飞行"
-        start_date = str(row["出发日期"])
-        end_date = str(row["到达日期"])
-        flight_time = row.get("预计飞行时间", "")
-        hours, minutes = parse_flight_time(flight_time)
-        dep_city = str(row["出发城市"]).strip()
-        arr_city = str(row["到达城市"]).strip()
-        reg_raw = str(row["飞机注册号"]).strip()
-        record = {
-            "reg": reg_raw,
-            "start_date": start_date,
-            "end_date": end_date,
-            "purpose": purpose,
-            "dep_city": dep_city,
-            "arr_city": arr_city,
-            "flight_hours": hours,
-            "flight_minutes": minutes
-        }
-        records.append(record)
-    return json.dumps(records, ensure_ascii=False, indent=4)
-
-def generate_js_script(flight_records_json, city_map_json, city_detail_map_json):
-    template = """
-// ==================== 自动生成的飞行计划填报脚本 ====================
+# 次日计划填报脚本（完整内嵌，无需修改）
+STEP2_SCRIPT_TEMPLATE = """
+// ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
 // 总计 __COUNT__ 条计划
 
-// ==================== 获取最新 iframe 文档 ====================
+// ================= 获取最新 iframe 文档 ====================
 async function getCurrentDoc() {
     const iframe = document.querySelector('#main');
     if (!iframe) throw new Error('未找到 iframe');
@@ -257,7 +50,7 @@ async function getCurrentDoc() {
     return doc;
 }
 
-// ==================== 等待元素出现 ====================
+// ================= 等待元素出现 ====================
 async function waitForElement(selector, timeout = 15000, isXPath = false) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -274,7 +67,7 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
     return null;
 }
 
-// ==================== 弹窗确定按钮搜索 ====================
+// ================= 弹窗确定按钮搜索 ====================
 async function waitForDialogConfirmButton(timeout = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -292,7 +85,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {
     return null;
 }
 
-// ==================== 确保当前在列表页 ====================
+// ================= 确保当前在列表页 ====================
 async function ensureListPage() {
     const btn = await waitForElement('input.query.yuanjiao', 15000);
     if (btn) return true;
@@ -315,16 +108,46 @@ async function ensureListPage() {
     }
 }
 
-// ==================== 城市到地区/国家的映射 ====================
-const CITY_MAP = __CITY_MAP__;
+// ================= 城市到地区/国家的映射 ====================
+const CITY_MAP = {
+    "菲律宾马尼拉": "菲律宾",
+    "马来西亚吉隆坡": "马来西亚",
+    "日本东京": "日本",
+    "北京首都": "北京",
+    "三亚凤凰": "海南",
+    "上海": "上海",
+    "成都双流": "四川",
+    "香港": "香港",
+    "哈萨克斯坦阿拉木图": "哈萨克斯坦",
+    "贵阳龙洞堡": "贵州",
+    "杭州萧山": "浙江",
+    "日照山字河": "山东"
+};
 
-// 境内机场到（省份，区县）的详细映射
-const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
+const CITY_DETAIL_MAP = {
+    "三亚凤凰": { province: "海南", district: "三亚" },
+    "北京首都": { province: "北京", district: "顺义区" },
+    "北京大兴": { province: "北京", district: "大兴区" },
+    "天津滨海": { province: "天津", district: "滨海新区" },
+    "上海虹桥": { province: "上海", district: "闵行区" },
+    "上海浦东": { province: "上海", district: "浦东新区" },
+    "重庆江北": { province: "重庆", district: "江北区" },
+    "成都双流": { province: "四川", district: "成都" },
+    "贵阳龙洞堡": { province: "贵州", district: "贵阳" },
+    "杭州萧山": { province: "浙江", district: "杭州" },
+    "日照山字河": { province: "山东", district: "日照" }
+};
+
+const DOMESTIC_KEYWORDS = [
+    '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
+    '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
+    '昆明', '贵阳', '南宁', '海口', '兰州', '西宁', '银川', '乌鲁木齐',
+    '拉萨', '呼和浩特', '哈尔滨', '长春', '沈阳', '石家庄', '太原', '济南',
+    '合肥', '南昌', '四川', '贵州', '浙江', '山东', '广东'
+];
 
 function getLocationInfo(city) {
-    const domesticKeywords = __DOMESTIC_KEYWORDS__;
-    const isDomestic = domesticKeywords.some(keyword => city.includes(keyword));
-    
+    const isDomestic = DOMESTIC_KEYWORDS.some(keyword => city.includes(keyword));
     if (isDomestic) {
         let region = CITY_MAP[city];
         if (!region) {
@@ -342,14 +165,13 @@ function getLocationInfo(city) {
     }
 }
 
-// ==================== 选择器 ====================
+// ================= 选择器 ====================
 const SELECTORS = {
     addBtnCSS: 'input.query.yuanjiao',
     aircraftSelect: '//*[@id="ele7"]',
     specialSelect: '#specialf',
     certSelect: '#operationCertificate',
     operateSelect: '#businessOperation',
-    // 非经营活动下拉框：使用文本定位，避免绝对路径失效
     purposeSelect: '//*[contains(text(), "非经营活动")]/following-sibling::*//select',
     startDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input',
     endDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input',
@@ -370,7 +192,7 @@ const SELECTORS = {
     submitBtn: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[40]/ul/li[2]/input',
 };
 
-// ==================== 辅助函数 ====================
+// ================= 辅助函数 ====================
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -399,7 +221,7 @@ function setDateInput(inputEl, dateStr) {
     return true;
 }
 
-// 通用航段填充函数（改进版，不再自动选择第二个选项）
+// 通用航段填充函数
 async function fillSegmentSelects(container, city) {
     const selects = container.querySelectorAll('select');
     if (selects.length < 2) {
@@ -422,7 +244,6 @@ async function fillSegmentSelects(container, city) {
         await setSelectValue(selects[1], info.region);
         if (selects.length >= 3) {
             const thirdSelect = selects[2];
-            // 点击“请选择”按钮
             let chooseBtn = null;
             const possibleButtons = container.querySelectorAll('button, div, span');
             for (let el of possibleButtons) {
@@ -435,9 +256,7 @@ async function fillSegmentSelects(container, city) {
                 chooseBtn.click();
                 await sleep(1000);
             }
-            // 等待选项加载
             await sleep(1000);
-            // 不再自动选择第二个选项，仅输出警告
             if (thirdSelect.options.length > 1) {
                 console.warn(`未找到区县选项，第三个下拉框将保持当前选择（默认为第一个选项）`);
             } else {
@@ -447,26 +266,19 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
-    // 设置境内和省份
     await setSelectValue(selects[0], "境内");
     await setSelectValue(selects[1], detail.province);
-    
-    // 等待1.5秒，让第三个下拉框的选项加载
     console.log(`等待第三个下拉框选项加载 (${detail.district})...`);
     await sleep(1500);
     
-    // 重新获取第三个下拉框元素
     const newSelects = container.querySelectorAll('select');
     if (newSelects.length < 3) {
         console.warn('重新获取后第三个下拉框不存在');
         return false;
     }
     const thirdSelect = newSelects[2];
-    
-    // 打印选项列表
     console.log('第三个下拉框当前选项:', Array.from(thirdSelect.options).map(o => o.text));
     
-    // 尝试匹配目标区县
     let targetIndex = -1;
     for (let i = 0; i < thirdSelect.options.length; i++) {
         if (thirdSelect.options[i].text.includes(detail.district)) {
@@ -481,7 +293,6 @@ async function fillSegmentSelects(container, city) {
         console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
     } else {
         console.warn(`未找到区县选项: ${detail.district}，请手动选择或补充映射。`);
-        // 不再自动选择
     }
     await sleep(500);
     return true;
@@ -601,6 +412,21 @@ async function selectAircraft(reg) {
     }
 }
 
+async function processTomorrow() {
+    console.log('🚀 开始执行次日计划填报流程...');
+    const flightRecords = __FLIGHT_RECORDS__;
+    for (let i = 0; i < flightRecords.length; i++) {
+        const record = flightRecords[i];
+        console.log(`开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
+        // 这里应调用您的处理逻辑，例如 processRecord(record)
+        // 由于原脚本中 processRecord 函数已定义，这里需要调用它
+        // 假设原脚本中已定义 processRecord 函数
+        await processRecord(record);
+    }
+    console.log('🎉 次日计划填报完成！');
+}
+
+// 原脚本中的 processRecord 函数（已从原脚本复制）
 async function processRecord(record) {
     console.log(`\\n开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
 
@@ -643,7 +469,6 @@ async function processRecord(record) {
     if (operateSelect) await setSelectValue(operateSelect, "否");
     else console.warn('未找到是否经营性作业 select');
 
-    // 用途下拉框
     const purposeSelect = await waitForElement(SELECTORS.purposeSelect, 10000, true);
     if (purposeSelect) await setSelectValue(purposeSelect, record.purpose);
     else console.warn('未找到用途下拉框');
@@ -737,77 +562,139 @@ async function processRecord(record) {
     await sleep(2000);
     return true;
 }
-
-// ==================== 执行 ====================
-(async () => {
-    const flightRecords = __FLIGHT_RECORDS__;
-    for (let i = 0; i < flightRecords.length; i++) {
-        const success = await processRecord(flightRecords[i]);
-        if (!success) {
-            console.error(`第 ${i+1} 条处理失败，终止后续执行。`);
-            break;
-        }
-    }
-    console.log("所有计划处理完毕");
-})();
 """
+
+# ---------- 辅助函数 ----------
+def parse_flight_time(time_str):
+    try:
+        parts = time_str.split(':')
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        return hours, minutes
+    except:
+        return 0, 0
+
+def generate_js_script(df_today, df_tomorrow, step1_template, step2_template):
+    # 生成当日数据的 JSON
+    today_records = []
+    for _, row in df_today.iterrows():
+        record = {
+            "飞机注册号": row.get("飞机注册号", ""),
+            "出发城市": row.get("出发城市", ""),
+            "到达城市": row.get("到达城市", ""),
+            "实际飞行时间": row.get("实际飞行时间", ""),
+            "实际出发": str(row.get("实际出发", "")),
+            "实际到达": str(row.get("实际到达", ""))
+        }
+        today_records.append(record)
+    today_json = json.dumps(today_records, ensure_ascii=False, indent=4)
+
+    # 生成次日计划的 JSON
+    tomorrow_records = []
+    for _, row in df_tomorrow.iterrows():
+        purpose_raw = row.get("用途", "")
+        if "维修" in purpose_raw or "调机" in purpose_raw:
+            purpose = "调机"
+        else:
+            purpose = "自用飞行"
+        start_date = str(row["出发日期"])
+        end_date = str(row["到达日期"])
+        flight_time = row.get("预计飞行时间", "")
+        hours, minutes = parse_flight_time(flight_time)
+        dep_city = str(row["出发城市"]).strip()
+        arr_city = str(row["到达城市"]).strip()
+        reg_raw = str(row["飞机注册号"]).strip()
+        record = {
+            "reg": reg_raw,
+            "start_date": start_date,
+            "end_date": end_date,
+            "purpose": purpose,
+            "dep_city": dep_city,
+            "arr_city": arr_city,
+            "flight_hours": hours,
+            "flight_minutes": minutes
+        }
+        tomorrow_records.append(record)
+    tomorrow_json = json.dumps(tomorrow_records, ensure_ascii=False, indent=4)
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    count = len(json.loads(flight_records_json))
-    final_script = template.replace("__DATETIME__", now)
-    final_script = final_script.replace("__COUNT__", str(count))
-    final_script = final_script.replace("__CITY_MAP__", city_map_json)
-    final_script = final_script.replace("__CITY_DETAIL_MAP__", city_detail_map_json)
-    final_script = final_script.replace("__DOMESTIC_KEYWORDS__", json.dumps(DOMESTIC_KEYWORDS))
-    final_script = final_script.replace("__FLIGHT_RECORDS__", flight_records_json)
-    return final_script
+    # 替换当日脚本占位符
+    today_script = step1_template.replace("__EXCEL_DATA__", today_json)
+    today_script = today_script.replace("__DATETIME__", now)
+    today_script = today_script.replace("__COUNT__", str(len(df_today)))
+    # 替换次日脚本占位符
+    tomorrow_script = step2_template.replace("__FLIGHT_RECORDS__", tomorrow_json)
+    tomorrow_script = tomorrow_script.replace("__DATETIME__", now)
+    tomorrow_script = tomorrow_script.replace("__COUNT__", str(len(df_tomorrow)))
+
+    combined_script = f"""
+// ==================== 自动生成的合并脚本 ====================
+// 生成时间: {now}
+// 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}
+// ============================================================
+
+// ------------------ 当日数据处理部分 ------------------
+{today_script}
+
+// ------------------ 次日计划填报部分 ------------------
+{tomorrow_script}
+
+// ------------------ 主流程：顺序执行 ------------------
+(async () => {{
+    console.log("========== 开始执行当日数据处理 ==========");
+    await processToday();
+    console.log("========== 当日数据处理完成，开始执行次日计划填报 ==========");
+    await processTomorrow();
+    console.log("========== 所有任务执行完毕 ==========");
+}})();
+"""
+    return combined_script
 
 # ---------- Streamlit UI ----------
-st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
-st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别所有境内城市省份，自动匹配区县，无需手动补充映射**）")
-
-st.sidebar.header("文件读取配置")
-header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
-                                     help="Excel 中实际列名所在的行索引（第一行为0）。通常您的文件第二行是列名，因此输入 1。")
-
-uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("📂 上传 Excel 文件（包含当日数据和次日计划）", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file, header=header_row)
+        # 读取 Excel，假设表头在第二行（索引1）
+        df = pd.read_excel(uploaded_file, header=1)
         df.columns = df.columns.str.strip()
-        df = df.dropna(how='all')
         st.success("文件上传成功！")
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]
-        missing = [col for col in required_cols if col not in df.columns]
-        if missing:
-            st.error(f"❌ 缺少必要列: {missing}")
-            st.info(f"实际列名: {list(df.columns)}")
+        # 分离当日和次日数据
+        if "实际到达" in df.columns:
+            df_today = df[df["实际到达"].notna() & (df["实际到达"] != "")].copy()
+            df_tomorrow = df[df["实际到达"].isna() | (df["实际到达"] == "")].copy()
         else:
-            st.info(f"✅ 共读取 {len(df)} 条飞行计划")
+            df_today = pd.DataFrame()
+            df_tomorrow = df.copy()
+            st.warning("Excel 中未找到“实际到达”列，将全部视为次日计划。")
 
-            # 立即生成脚本（无需按钮）
-            with st.spinner("正在构建城市映射并生成脚本..."):
-                custom_detail_map = {}
-                city_map, detail_map = build_city_mappings(df, custom_detail_map)
-                city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
-                detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
-                flight_records_json = generate_flight_records(df)
-                st.subheader("🔍 城市映射预览（前10个）")
-                preview_map = {k: v for k, v in list(city_map.items())[:10]}
-                st.json(preview_map)
-                final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
-                st.success("脚本生成成功！")
-                st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
-                st.code(final_script, language="javascript")
-                st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
+        st.info(f"✅ 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}")
+
+        if len(df_today) == 0 and len(df_tomorrow) == 0:
+            st.error("❌ 没有找到任何有效数据，请检查文件格式。")
+            st.stop()
+
+        # 允许用户编辑当日脚本模板（可选）
+        with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
+            step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=300, key="step1")
+        step2_template = STEP2_SCRIPT_TEMPLATE  # 次日脚本固定
+
+        with st.spinner("正在生成脚本..."):
+            final_script = generate_js_script(df_today, df_tomorrow, step1_template, step2_template)
+
+        st.subheader("📜 生成的合并 JavaScript 脚本")
+        st.code(final_script, language="javascript")
+        st.info("💡 复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。")
+        st.download_button(
+            label="💾 下载脚本文件 (.js)",
+            data=final_script,
+            file_name="combined_flight_plan.js",
+            mime="application/javascript"
+        )
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
 else:
-    st.info("请上传 Excel 文件开始")
-
-st.markdown("---")
-st.caption("本工具内置完整中国城市-省份映射表，自动识别境内城市省份，并从城市名中提取关键词作为区县名，无需手动补充映射。")
+    st.info("请上传 Excel 文件开始。")
