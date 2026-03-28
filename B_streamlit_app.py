@@ -1,4 +1,4 @@
-# streamlit_app.py
+# streamlit_app.py (完整代码，请替换)
 import streamlit as st
 import pandas as pd
 import json
@@ -13,7 +13,7 @@ st.markdown("""
 > **注意**：当日脚本模板提供了基于常见页面结构的匹配逻辑，您可能需要根据实际页面调整选择器（见下方“编辑当日数据处理脚本”区域）。
 """)
 
-# ---------- 当日数据处理脚本模板（可编辑，包含跳过失败逻辑） ----------
+# ---------- 当日数据处理脚本模板（可编辑，包含 iframe 等待） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
@@ -21,8 +21,8 @@ DEFAULT_STEP1_TEMPLATE = """
 //   ROW_SELECTOR: 表格行选择器
 //   REG_SELECTOR: 飞机注册号所在列的选择器
 //   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器
-//   ​EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 button:contains("编辑")）
-//   ​表单内字段选择器（见 fillActualArrival 函数）
+//   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 button:contains("编辑")）
+//   表单内字段选择器（见 fillActualArrival 函数）
 
 // 配置区
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';    // 表格行选择器
@@ -35,6 +35,18 @@ const excelData = __EXCEL_DATA__;
 
 // ================= 辅助函数 =================
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function waitForIframe(timeout = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const iframe = document.querySelector('#main');
+        if (iframe && iframe.contentDocument) {
+            return iframe.contentDocument;
+        }
+        await sleep(500);
+    }
+    throw new Error('等待 iframe 超时');
+}
 
 async function getCurrentDoc() {
     const iframe = document.querySelector('#main');
@@ -64,7 +76,6 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
 }
 
 async function clickEditButton(row) {
-    // 根据实际页面调整编辑按钮的选择器
     const editBtn = row.querySelector(EDIT_BUTTON_SELECTOR);
     if (!editBtn) {
         console.warn('未找到编辑按钮');
@@ -77,7 +88,7 @@ async function clickEditButton(row) {
 
 async function fillActualArrival(record) {
     const doc = await getCurrentDoc();
-    // 实际到达输入框（请根据实际页面调整）
+    // 实际到达输入框
     const actualArrivalInput = doc.querySelector('#actualArrival') || 
                                doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualArrivalInput) {
@@ -87,21 +98,21 @@ async function fillActualArrival(record) {
     } else {
         console.warn('未找到实际到达输入框，跳过该字段');
     }
-    // 实际出发输入框（可选）
+    // 实际出发输入框
     const actualDepartureInput = doc.querySelector('#actualDeparture') ||
                                  doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualDepartureInput && record.实际出发) {
         actualDepartureInput.value = record.实际出发;
         actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 实际飞行时间输入框（可选）
+    // 实际飞行时间输入框
     const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
                                   doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualFlightTimeInput && record.实际飞行时间) {
         actualFlightTimeInput.value = record.实际飞行时间;
         actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 提交保存按钮（请根据实际页面调整）
+    // 保存按钮
     const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
                       doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (submitBtn) {
@@ -155,6 +166,14 @@ async function findAllMatches() {
 
 async function processToday() {
     console.log('🚀 开始执行当日数据处理流程...');
+    // 等待 iframe 出现
+    try {
+        await waitForIframe();
+        console.log('iframe 已加载');
+    } catch (err) {
+        console.error('❌ 等待 iframe 超时，请确保页面已正确加载并重试。');
+        return;
+    }
     const matches = await findAllMatches();
     if (matches.length === 0) {
         console.warn('⚠️ 没有找到任何匹配的计划，跳过当日数据处理');
