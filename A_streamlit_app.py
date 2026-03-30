@@ -185,22 +185,22 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（实际匹配并填写数据） ----------
+# ---------- 当日数据处理脚本模板（改进匹配逻辑） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
 // 请根据实际页面结构调整以下选择器：
 //   ROW_SELECTOR: 表格行选择器（例如 'table tbody:nth-of-type(2) tr'）
 //   REG_SELECTOR: 飞机注册号所在列的选择器（例如 'td:nth-child(6) div'）
-//   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器（例如 'td:nth-child(7) div'）
+//   SEGMENT_SELECTOR: 航段信息所在单元格的选择器（例如 'td:nth-child(7) div'）
 //   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 'button:contains("编辑")' 或 'a:contains("编辑")'）
 //   表单内字段选择器（见 fillActualArrival 函数）
 
 // 配置区
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';    // 表格行选择器
 const REG_SELECTOR = 'td:nth-child(6) div';              // 飞机注册号所在列
-const SEGMENT_SELECTOR = 'td:nth-child(7) div';          // 航段信息列（出发城市->到达城市）
-const EDIT_BUTTON_SELECTOR = 'button:contains("编辑")';  // 编辑按钮选择器
+const SEGMENT_SELECTOR = 'td:nth-child(7) div';          // 航段信息所在单元格
+const EDIT_BUTTON_SELECTOR = 'a, button';                // 编辑按钮选择器（将尝试查找所有 a 和 button，然后筛选）
 
 // 从 Excel 提取的数据（包含实际到达时间）
 const excelData = __EXCEL_DATA__;
@@ -209,7 +209,6 @@ const excelData = __EXCEL_DATA__;
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function getCurrentDoc() {
-    // 尝试多种 iframe 选择器
     const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
     let iframe = null;
     for (let sel of iframeSelectors) {
@@ -250,30 +249,17 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
 }
 
 async function clickEditButton(row) {
-    // 尝试多种可能的编辑按钮选择器
-    const editSelectors = [
-        'button:contains("编辑")',
-        'a:contains("编辑")',
-        '.edit-btn',
-        '[title="编辑"]',
-        'button.edit',
-        'a.edit'
-    ];
+    // 在行内查找所有 a 或 button 元素，选择包含“编辑”文本或 title 为“编辑”的
+    const elements = row.querySelectorAll('a, button');
     let editBtn = null;
-    for (let sel of editSelectors) {
-        if (sel.includes(':contains')) {
-            // 模拟 :contains 选择器
-            const elements = row.querySelectorAll('button, a');
-            for (let el of elements) {
-                if (el.innerText && el.innerText.includes('编辑')) {
-                    editBtn = el;
-                    break;
-                }
-            }
-            if (editBtn) break;
-        } else {
-            editBtn = row.querySelector(sel);
-            if (editBtn) break;
+    for (let el of elements) {
+        if (el.innerText && el.innerText.includes('编辑')) {
+            editBtn = el;
+            break;
+        }
+        if (el.title && el.title.includes('编辑')) {
+            editBtn = el;
+            break;
         }
     }
     if (!editBtn) {
@@ -340,6 +326,19 @@ async function processOnePlan(row, matchedExcel) {
     return success;
 }
 
+// 从航段文本中提取出发和到达城市
+function parseSegment(segmentText) {
+    // 文本格式如：境内-广东-深圳,境内-浙江-杭州
+    const parts = segmentText.split(',');
+    if (parts.length < 2) return null;
+    const firstPart = parts[0].split('-');
+    const secondPart = parts[1].split('-');
+    if (firstPart.length < 3 || secondPart.length < 3) return null;
+    const depCity = firstPart[2]; // 深圳
+    const arrCity = secondPart[2]; // 杭州
+    return { dep: depCity, arr: arrCity };
+}
+
 async function findAllMatches() {
     const doc = await getCurrentDoc();
     if (!doc) {
@@ -354,7 +353,13 @@ async function findAllMatches() {
         const segmentCell = row.querySelector(SEGMENT_SELECTOR);
         if (!regCell || !segmentCell) continue;
         const reg = regCell.innerText.trim();
-        const segment = segmentCell.innerText.trim();
+        const segmentText = segmentCell.innerText.trim();
+        const parsed = parseSegment(segmentText);
+        if (!parsed) {
+            console.warn(`无法解析航段文本: ${segmentText}`);
+            continue;
+        }
+        const segment = `${parsed.dep} -> ${parsed.arr}`;
         for (const record of excelData) {
             const excelReg = record.飞机注册号;
             const excelSegment = `${record.出发城市} -> ${record.到达城市}`;
