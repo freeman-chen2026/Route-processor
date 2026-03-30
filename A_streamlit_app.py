@@ -141,7 +141,8 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
             "到达城市": row.get("到达城市", ""),
             "实际飞行时间": row.get("实际飞行时间", ""),
             "实际出发": str(row.get("实际出发", "")),
-            "实际到达": str(row.get("实际到达", ""))
+            "实际到达": str(row.get("实际到达", "")),
+            "出发日期": str(row["出发日期"])
         }
         today_records.append(record)
     today_json = json.dumps(today_records, ensure_ascii=False, indent=4)
@@ -185,7 +186,7 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（增强版，包含详细匹配日志） ----------
+# ---------- 当日数据处理脚本模板（增强版，包含日期匹配） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
@@ -193,6 +194,7 @@ DEFAULT_STEP1_TEMPLATE = """
 //   ROW_SELECTOR: 表格行选择器（例如 'table tbody:nth-of-type(2) tr'）
 //   REG_SELECTOR: 飞机注册号所在列的选择器（例如 'td:nth-child(6) div'）
 //   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器（例如 'td:nth-child(7) div'）
+//   DATE_SELECTOR: 服务开始日期所在列的选择器（例如 'td:nth-child(5)'）
 //   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 'button:contains("编辑")' 或 'a:contains("编辑")'）
 //   表单内字段选择器（见 fillActualArrival 函数）
 
@@ -200,6 +202,7 @@ DEFAULT_STEP1_TEMPLATE = """
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';    // 表格行选择器
 const REG_SELECTOR = 'td:nth-child(6) div';              // 飞机注册号所在列
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';          // 航段信息列（出发城市->到达城市）
+const DATE_SELECTOR = 'td:nth-child(5)';                 // 服务开始日期所在列（请根据实际调整）
 const EDIT_BUTTON_SELECTOR = 'button:contains("编辑")';  // 编辑按钮选择器
 
 // 从 Excel 提取的数据（包含实际到达时间）
@@ -208,9 +211,9 @@ const excelData = __EXCEL_DATA__;
 // ================= 辅助函数 =================
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-// 标准化注册号（去除短横线）
+// 标准化注册号（去除空格、短横线）
 function normalizeReg(reg) {
-    return reg.replace(/-/g, '');
+    return reg.replace(/[\\s-]/g, '');
 }
 
 // 解析航段信息，提取城市名（例如从 "境内-广东-深圳,境内-浙江-杭州" 中提取 "深圳" 和 "杭州"）
@@ -358,26 +361,29 @@ async function findAllMatches() {
         const row = rows[i];
         const regCell = row.querySelector(REG_SELECTOR);
         const segmentCell = row.querySelector(SEGMENT_SELECTOR);
-        if (!regCell || !segmentCell) {
-            console.log(`行 ${i+1}: 缺少注册号或航段单元格，跳过`);
+        const dateCell = row.querySelector(DATE_SELECTOR);
+        if (!regCell || !segmentCell || !dateCell) {
+            console.log(`行 ${i+1}: 缺少注册号、航段或日期单元格，跳过`);
             continue;
         }
         const reg = regCell.innerText.trim();
         const segment = segmentCell.innerText.trim();
+        const dateStr = dateCell.innerText.trim();
         const normalizedReg = normalizeReg(reg);
         const parsed = parseSegment(segment);
-        console.log(`行 ${i+1}: 注册号="${reg}" (标准化="${normalizedReg}"), 航段="${segment}", 解析后出发="${parsed?.dep}", 到达="${parsed?.arr}"`);
+        console.log(`行 ${i+1}: 注册号="${reg}" (标准化="${normalizedReg}"), 航段="${segment}", 解析后出发="${parsed?.dep}", 到达="${parsed?.arr}", 日期="${dateStr}"`);
         for (const record of excelData) {
             const excelReg = normalizeReg(record.飞机注册号);
             const excelDep = record.出发城市.split(' ')[0];
             const excelArr = record.到达城市.split(' ')[0];
-            console.log(`  与 Excel 比较: 注册号="${excelReg}", 出发="${excelDep}", 到达="${excelArr}"`);
-            if (normalizedReg === excelReg && parsed && parsed.dep === excelDep && parsed.arr === excelArr) {
+            const excelDate = record.出发日期;
+            console.log(`  与 Excel 比较: 注册号="${excelReg}", 出发="${excelDep}", 到达="${excelArr}", 日期="${excelDate}"`);
+            if (normalizedReg === excelReg && parsed && parsed.dep === excelDep && parsed.arr === excelArr && dateStr === excelDate) {
                 console.log(`  ✅ 匹配成功！`);
                 matches.push({ row, matchedExcel: record });
                 break;
             } else {
-                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${parsed && parsed.dep === excelDep}, 到达匹配=${parsed && parsed.arr === excelArr}`);
+                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${parsed && parsed.dep === excelDep}, 到达匹配=${parsed && parsed.arr === excelArr}, 日期匹配=${dateStr === excelDate}`);
             }
         }
     }
