@@ -1,1060 +1,424 @@
-# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import json
 from datetime import datetime
-import pytz
 
-st.set_page_config(page_title="飞行计划自动化脚本生成器（当日+次日）", layout="wide")
-st.title("✈️ 飞行计划自动化脚本生成器（当日 + 次日）")
-st.markdown("""
-1. 上传一个包含**当日飞行数据**（出发日期为今天且有实际到达时间）和**次日计划**（出发日期晚于今天）的 Excel 文件  
-2. 自动生成一个 JavaScript 脚本，在控制台运行后，会**先处理当日实际记录（匹配列表并填写）**，再**填报次日计划（新增备案）**。  
-3. 当日脚本中如果某条记录匹配失败或操作失败，会自动跳过并继续后续。  
-4. 次日脚本中如果某个计划处理失败，也会自动跳过并继续。  
-> **注意**：请确保 Excel 中“出发日期”列格式正确，且“实际到达”列仅当日数据填写了值。
-""")
+st.set_page_config(page_title="飞行计划脚本生成器", layout="wide")
+st.title("✈️ 飞行计划自动化脚本生成器")
+st.markdown("上传每日导出的 Excel 文件，自动生成浏览器控制台脚本，用于批量填写飞行计划表单。")
 
-# ---------- 获取当前北京时间 ----------
-beijing_tz = pytz.timezone('Asia/Shanghai')
-today = datetime.now(beijing_tz).date()
-
-# ---------- 中国所有省份名称（用于境内判断） ----------
-ALL_PROVINCES = [
-    "北京", "天津", "上海", "重庆", "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏",
-    "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南",
-    "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西", "宁夏", "新疆", "西藏"
-]
-
-# ---------- 常见地级市（用于增强判断） ----------
-MAJOR_CITIES = [
-    "广州", "深圳", "成都", "西安", "三亚", "杭州", "南京", "武汉", "长沙", "郑州",
-    "青岛", "大连", "厦门", "福州", "昆明", "贵阳", "南宁", "海口", "兰州", "西宁",
-    "银川", "乌鲁木齐", "拉萨", "呼和浩特", "哈尔滨", "长春", "沈阳", "石家庄",
-    "太原", "济南", "合肥", "南昌"
-]
-DOMESTIC_KEYWORDS = list(set(ALL_PROVINCES + MAJOR_CITIES))
-
-# ---------- 城市映射表（根据 Excel 自动生成，但这里预先定义常见映射） ----------
-BASE_CITY_MAP = {
-    "杭州萧山": "浙江",
-    "厦门高崎": "福建",
-    "济南遥墙": "山东",
-    "新加坡实里达": "新加坡",
-    "深圳宝安": "广东",
-    "香港": "香港",
-    "玉林福绵": "广西",
-    "上海虹桥": "上海",
-    "北京首都": "北京",
-    "青岛胶东": "山东"
-}
-
-BASE_CITY_DETAIL_MAP = {
-    "北京首都": {"province": "北京", "district": "顺义区"},
-    "北京大兴": {"province": "北京", "district": "大兴区"},
-    "天津滨海": {"province": "天津", "district": "滨海新区"},
-    "上海虹桥": {"province": "上海", "district": "闵行区"},
-    "上海浦东": {"province": "上海", "district": "浦东新区"},
-    "重庆江北": {"province": "重庆", "district": "江北区"},
-    "杭州萧山": {"province": "浙江", "district": "杭州"},
-    "厦门高崎": {"province": "福建", "district": "厦门"},
-    "济南遥墙": {"province": "山东", "district": "济南"},
-    "深圳宝安": {"province": "广东", "district": "深圳"},
-    "玉林福绵": {"province": "广西", "district": "玉林"},
-    "青岛胶东": {"province": "山东", "district": "青岛"}
-}
-
-# ---------- 辅助函数 ----------
-def parse_flight_time(time_str):
-    try:
-        parts = time_str.split(':')
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        return hours, minutes
-    except:
-        return 0, 0
-
-def build_city_mappings(df):
-    """根据数据动态扩展映射，但保留基础映射"""
-    cities = set()
-    for _, row in df.iterrows():
-        dep = str(row["出发城市"]).strip()
-        arr = str(row["到达城市"]).strip()
-        cities.add(dep)
-        cities.add(arr)
-
-    city_map = BASE_CITY_MAP.copy()
-    city_detail_map = BASE_CITY_DETAIL_MAP.copy()
-
-    for city in cities:
-        if city in city_map:
-            continue
-        # 境内判断：如果城市名包含省份或主要城市关键词，则视为境内
-        is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
-        if is_domestic:
-            # 尝试提取省份（取第一个词）
-            province = city.split()[0] if city.split() else city
-            city_map[city] = province
-            city_detail_map[city] = {"province": province, "district": ""}
-        else:
-            # 境外：取第一个词作为国家名
-            country = city.split()[0] if city.split() else city
-            city_map[city] = country
-            # 境外不需要 detail_map
-    return city_map, city_detail_map
-
-def generate_flight_records(df):
-    records = []
-    for _, row in df.iterrows():
-        purpose_raw = row.get("用途", "")
-        if "维修" in purpose_raw or "调机" in purpose_raw:
-            purpose = "调机"
-        else:
-            purpose = "自用飞行"
-        start_date = str(row["出发日期"])
-        end_date = str(row["到达日期"])
-        flight_time = row.get("预计飞行时间", "")
-        hours, minutes = parse_flight_time(flight_time)
-        dep_city = str(row["出发城市"]).strip()
-        arr_city = str(row["到达城市"]).strip()
-        reg_raw = str(row["飞机注册号"]).strip()
-        record = {
-            "reg": reg_raw,
-            "start_date": start_date,
-            "end_date": end_date,
-            "purpose": purpose,
-            "dep_city": dep_city,
-            "arr_city": arr_city,
-            "flight_hours": hours,
-            "flight_minutes": minutes
-        }
-        records.append(record)
-    return json.dumps(records, ensure_ascii=False, indent=4)
-
-def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, city_map_json, city_detail_map_json, domestic_keywords_json):
-    # 生成当日数据的 JSON
-    today_records = []
-    for _, row in df_today.iterrows():
-        record = {
-            "飞机注册号": row.get("飞机注册号", ""),
-            "出发城市": row.get("出发城市", ""),
-            "到达城市": row.get("到达城市", ""),
-            "实际飞行时间": row.get("实际飞行时间", ""),
-            "实际出发": str(row.get("实际出发", "")),
-            "实际到达": str(row.get("实际到达", "")),
-            "出发日期": str(row["出发日期"])
-        }
-        today_records.append(record)
-    today_json = json.dumps(today_records, ensure_ascii=False, indent=4)
-
-    # 生成次日计划的 JSON
-    tomorrow_json = generate_flight_records(df_tomorrow)
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # 替换当日脚本占位符
-    today_script = step1_template.replace("__EXCEL_DATA__", today_json)
-    today_script = today_script.replace("__DATETIME__", now)
-    today_script = today_script.replace("__COUNT__", str(len(df_today)))
-    # 替换次日脚本占位符
-    tomorrow_script = step2_template.replace("__FLIGHT_RECORDS__", tomorrow_json)
-    tomorrow_script = tomorrow_script.replace("__DATETIME__", now)
-    tomorrow_script = tomorrow_script.replace("__COUNT__", str(len(df_tomorrow)))
-    tomorrow_script = tomorrow_script.replace("__CITY_MAP__", city_map_json)
-    tomorrow_script = tomorrow_script.replace("__CITY_DETAIL_MAP__", city_detail_map_json)
-    tomorrow_script = tomorrow_script.replace("__DOMESTIC_KEYWORDS__", domestic_keywords_json)
-
-    combined_script = f"""
-// ==================== 自动生成的合并脚本 ====================
-// 生成时间: {now}
-// 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}
-// ============================================================
-
-// ------------------ 当日数据处理部分 ------------------
-{today_script}
-
-// ------------------ 次日计划填报部分 ------------------
-{tomorrow_script}
-
-// ------------------ 主流程：顺序执行 ------------------
-(async () => {{
-    console.log("========== 开始执行当日数据处理 ==========");
-    await processToday();
-    console.log("========== 当日数据处理完成，开始执行次日计划填报 ==========");
-    await processTomorrow();
-    console.log("========== 所有任务执行完毕 ==========");
-}})();
-"""
-    return combined_script
-
-# ---------- 当日数据处理脚本模板（已修正：改进 fillActualArrival 定位） ----------
-DEFAULT_STEP1_TEMPLATE = """
-// ================= 当日数据处理脚本 =================
-// 配置区
-const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
-const REG_SELECTOR = 'td:nth-child(6) div';
-const SEGMENT_SELECTOR = 'td:nth-child(7) div';
-const DATE_SELECTOR = 'td:nth-child(9)';                 // 服务开始日期所在列
-const EDIT_BUTTON_COL_INDEX = 13;                        // 操作按钮所在列（第13列）
-
-// 从 Excel 提取的数据（包含实际到达时间）
-const excelData = __EXCEL_DATA__;
-
-// ================= 辅助函数 =================
-async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-function normalizeReg(reg) {
-    return reg.replace(/[\\s-]/g, '');
-}
-
-function parseSegment(segmentText) {
-    const parts = segmentText.split(',');
-    if (parts.length < 2) return null;
-    const depPart = parts[0];
-    const arrPart = parts[1];
-    const depMatch = depPart.match(/-([^\\s-]+)$/);
-    const arrMatch = arrPart.match(/-([^\\s-]+)$/);
-    if (depMatch && arrMatch) {
-        return { dep: depMatch[1], arr: arrMatch[1] };
-    }
-    return null;
-}
-
-async function getCurrentDoc() {
-    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
-    let iframe = null;
-    for (let sel of iframeSelectors) {
-        iframe = document.querySelector(sel);
-        if (iframe) break;
-    }
-    if (iframe) {
-        let doc = iframe.contentDocument;
-        while (!doc || !doc.querySelector('body')) {
-            await sleep(200);
-            doc = iframe.contentDocument;
-        }
-        return doc;
-    } else {
-        console.warn('未找到 iframe，将使用顶层文档');
-        return document;
-    }
-}
-
-async function waitForElement(selector, timeout = 15000, isXPath = false) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const doc = await getCurrentDoc();
-        let el;
-        if (isXPath) {
-            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        } else {
-            el = doc.querySelector(selector);
-        }
-        if (el) return el;
-        await sleep(500);
-    }
-    console.warn(`等待元素超时: ${selector}`);
-    return null;
-}
-
-async function clickEditButton(row) {
-    // 通过列索引定位操作按钮所在的单元格
-    const cell = row.querySelector(`td:nth-child(${EDIT_BUTTON_COL_INDEX})`);
-    if (!cell) {
-        console.warn(`未找到第 ${EDIT_BUTTON_COL_INDEX} 列单元格`);
-        return false;
-    }
-    // 点击该单元格内的第一个按钮（通常是“执行”按钮）
-    const btn = cell.querySelector('a, button');
-    if (!btn) {
-        console.warn('未找到可点击按钮');
-        return false;
-    }
-    btn.click();
-    console.log('已点击执行按钮');
-    await sleep(1000);
-    return true;
-}
-
-async function fillActualArrival(record) {
-    const doc = await getCurrentDoc();
-    if (!doc) return false;
-
-    // 1. 查找“实际到达”输入框（多种方式）
-    let actualArrivalInput = null;
-    // 方式1：通过常见 ID
-    actualArrivalInput = doc.querySelector('#actualArrival, #actualArrivalTime, #arrivalTime, #actual_time');
-    // 方式2：通过包含“实际到达”文本的标签定位其后的输入框
-    if (!actualArrivalInput) {
-        const label = doc.evaluate('//*[contains(text(), "实际到达")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (label) {
-            // 尝试找同级或父级内的 input
-            actualArrivalInput = label.parentNode?.querySelector('input') ||
-                                 label.nextElementSibling?.querySelector('input');
-        }
-    }
-    // 方式3：通过 XPath 直接查找包含“实际到达”的输入框（假设输入框附近有文本）
-    if (!actualArrivalInput) {
-        const xpath = '//*[contains(text(), "实际到达")]/following-sibling::*//input';
-        actualArrivalInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    // 方式4：尝试已知的绝对路径（根据用户提供的示例，可能是 div[9] 或 div[10] 等，但不确定，这里作为备选）
-    if (!actualArrivalInput) {
-        // 尝试查找所有 input，假设第二个是实际到达（实际情况可能不同）
-        const allInputs = doc.querySelectorAll('input');
-        if (allInputs.length >= 2) {
-            actualArrivalInput = allInputs[1]; // 假设第二个输入框是实际到达
-            console.warn('使用第2个输入框作为实际到达输入框');
-        }
-    }
-    if (actualArrivalInput) {
-        actualArrivalInput.value = record.实际到达;
-        actualArrivalInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入实际到达时间: ${record.实际到达}`);
-    } else {
-        console.warn('未找到实际到达输入框，跳过该字段');
-        // 输出所有输入框的 id/name/placeholder 以便调试
-        const inputs = doc.querySelectorAll('input');
-        console.log('页面中的输入框:', Array.from(inputs).map(i => ({ id: i.id, name: i.name, placeholder: i.placeholder })));
-    }
-
-    // 2. 查找“实际出发”输入框（可选）
-    let actualDepartureInput = null;
-    // 通过包含“实际出发”文本的标签定位
-    const depLabel = doc.evaluate('//*[contains(text(), "实际出发")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (depLabel) {
-        actualDepartureInput = depLabel.parentNode?.querySelector('input') ||
-                               depLabel.nextElementSibling?.querySelector('input');
-    }
-    if (!actualDepartureInput) {
-        const xpath = '//*[contains(text(), "实际出发")]/following-sibling::*//input';
-        actualDepartureInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (actualDepartureInput && record.实际出发) {
-        actualDepartureInput.value = record.实际出发;
-        actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入实际出发时间: ${record.实际出发}`);
-    }
-
-    // 3. 查找“实际飞行时间”输入框（可选）
-    let actualFlightTimeInput = null;
-    const timeLabel = doc.evaluate('//*[contains(text(), "实际飞行时间")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (timeLabel) {
-        actualFlightTimeInput = timeLabel.parentNode?.querySelector('input') ||
-                                timeLabel.nextElementSibling?.querySelector('input');
-    }
-    if (!actualFlightTimeInput) {
-        const xpath = '//*[contains(text(), "实际飞行时间")]/following-sibling::*//input';
-        actualFlightTimeInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (actualFlightTimeInput && record.实际飞行时间) {
-        actualFlightTimeInput.value = record.实际飞行时间;
-        actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入实际飞行时间: ${record.实际飞行时间}`);
-    }
-
-    // 4. 查找“保存”按钮
-    let submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!submitBtn) {
-        submitBtn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (!submitBtn) {
-        submitBtn = doc.evaluate('//input[@value="保存"]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (submitBtn) {
-        submitBtn.click();
-        console.log('已提交保存');
-        await sleep(2000);
-        await waitForElement('input.query.yuanjiao', 15000);
-        return true;
-    } else {
-        console.warn('未找到保存按钮');
-        // 输出所有按钮文本，便于调试
-        const btns = doc.querySelectorAll('button, input[type="submit"], input[type="button"]');
-        console.log('页面中的按钮:', Array.from(btns).map(b => b.innerText || b.value));
-        return false;
-    }
-}
-
-async function processOnePlan(row, matchedExcel) {
-    console.log(`处理匹配计划: ${matchedExcel.飞机注册号} ${matchedExcel.出发城市} -> ${matchedExcel.到达城市}`);
-    if (!await clickEditButton(row)) {
-        console.error('无法点击执行按钮，跳过');
-        return false;
-    }
-    const success = await fillActualArrival(matchedExcel);
-    if (!success) {
-        console.error('填写失败');
-    }
-    return success;
-}
-
-async function findAllMatches() {
-    const doc = await getCurrentDoc();
-    if (!doc) {
-        console.error('无法获取文档');
-        return [];
-    }
-    const rows = doc.querySelectorAll(ROW_SELECTOR);
-    const matches = [];
-    console.log(`开始扫描列表，共 ${rows.length} 行`);
-    for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const regCell = row.querySelector(REG_SELECTOR);
-        const segmentCell = row.querySelector(SEGMENT_SELECTOR);
-        const dateCell = row.querySelector(DATE_SELECTOR);
-        if (!regCell || !segmentCell || !dateCell) {
-            console.log(`行 ${i+1}: 缺少注册号、航段或日期单元格，跳过`);
-            continue;
-        }
-        const reg = regCell.innerText.trim();
-        const segment = segmentCell.innerText.trim();
-        const dateStr = dateCell.innerText.trim();
-        const normalizedReg = normalizeReg(reg);
-        const parsed = parseSegment(segment);
-        console.log(`行 ${i+1}: 注册号="${reg}" (标准化="${normalizedReg}"), 航段="${segment}", 解析后出发="${parsed?.dep}", 到达="${parsed?.arr}", 日期="${dateStr}"`);
-        for (const record of excelData) {
-            const excelReg = normalizeReg(record.飞机注册号);
-            const excelDep = record.出发城市.split(' ')[0];
-            const excelArr = record.到达城市.split(' ')[0];
-            const excelDate = record.出发日期;
-            console.log(`  与 Excel 比较: 注册号="${excelReg}", 出发="${excelDep}", 到达="${excelArr}", 日期="${excelDate}"`);
-            // 部分匹配出发和到达
-            const depMatch = parsed && (excelDep.includes(parsed.dep) || parsed.dep.includes(excelDep));
-            const arrMatch = parsed && (excelArr.includes(parsed.arr) || parsed.arr.includes(excelArr));
-            if (normalizedReg === excelReg && depMatch && arrMatch && dateStr === excelDate) {
-                console.log(`  ✅ 匹配成功！`);
-                matches.push({ row, matchedExcel: record });
-                break;
-            } else {
-                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${depMatch}, 到达匹配=${arrMatch}, 日期匹配=${dateStr === excelDate}`);
-            }
-        }
-    }
-    console.log(`找到 ${matches.length} 个匹配计划`);
-    return matches;
-}
-
-async function processToday() {
-    console.log('🚀 开始执行当日数据处理流程...');
-    const matches = await findAllMatches();
-    if (matches.length === 0) {
-        console.warn('⚠️ 没有找到任何匹配的计划，跳过当日数据处理');
-        return;
-    }
-    for (let i = 0; i < matches.length; i++) {
-        const { row, matchedExcel } = matches[i];
-        console.log(`\\n========== 处理第 ${i+1}/${matches.length} 个匹配计划 ==========`);
-        try {
-            const success = await processOnePlan(row, matchedExcel);
-            if (!success) {
-                console.error(`⚠️ 第 ${i+1} 个计划处理失败，跳过继续下一个...`);
-            } else {
-                console.log(`✅ 第 ${i+1} 个计划处理完成并已返回列表页。`);
-            }
-        } catch (err) {
-            console.error(`处理第 ${i+1} 个计划时发生异常:`, err);
-        }
-    }
-    console.log('🎉 当日数据处理完成！');
-}
-"""
-
-# ---------- 次日计划填报脚本模板（保持不变，已集成境内判断） ----------
-STEP2_SCRIPT_TEMPLATE = """
-// ================= 次日计划填报脚本 =================
-// 生成时间: __DATETIME__
-// 总计 __COUNT__ 条计划
-
-// ================= 获取最新 iframe 文档 ====================
-async function getCurrentDoc() {
-    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
-    let iframe = null;
-    for (let sel of iframeSelectors) {
-        iframe = document.querySelector(sel);
-        if (iframe) break;
-    }
-    if (!iframe) {
-        console.warn('未找到 iframe，可能是页面未加载完成');
-        return null;
-    }
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }
-    return doc;
-}
-
-// ================= 等待元素出现 ====================
-async function waitForElement(selector, timeout = 15000, isXPath = false) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const doc = await getCurrentDoc();
-        if (!doc) {
-            await sleep(500);
-            continue;
-        }
-        let el;
-        if (isXPath) {
-            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        } else {
-            el = doc.querySelector(selector);
-        }
-        if (el) return el;
-        await sleep(500);
-    }
-    console.warn(`等待元素超时: ${selector}`);
-    return null;
-}
-
-// ================= 弹窗确定按钮搜索 ====================
-async function waitForDialogConfirmButton(timeout = 15000) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        let btn = document.evaluate('//a[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (!btn) btn = document.evaluate('//button[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (btn) return btn;
-        try {
-            const doc = await getCurrentDoc();
-            if (!doc) continue;
-            btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (btn) return btn;
-        } catch(e) {}
-        await sleep(300);
-    }
-    return null;
-}
-
-// ================= 确保当前在列表页 ====================
-async function ensureListPage() {
-    const btn = await waitForElement('input.query.yuanjiao', 15000);
-    if (btn) return true;
-    console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
-    const doc = await getCurrentDoc();
-    if (!doc) return false;
-    let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (closeBtn) {
-        closeBtn.click();
-        console.log('已点击关闭按钮，等待返回列表页');
-        await sleep(1000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
-        return backBtn !== null;
-    } else {
-        console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
-        await sleep(5000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
-        return backBtn !== null;
-    }
-}
-
-// ================= 城市到地区/国家的映射 ====================
-const CITY_MAP = __CITY_MAP__;
-const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
-const DOMESTIC_KEYWORDS = __DOMESTIC_KEYWORDS__;
-
-function getLocationInfo(city) {
-    // 优先检查详细映射（境内城市）
-    const detail = CITY_DETAIL_MAP[city];
-    if (detail) {
-        return { zone: "境内", region: detail.province, needThirdSelect: true, district: detail.district };
-    }
-    // 其次检查普通映射
-    const mapped = CITY_MAP[city];
-    if (mapped) {
-        // 如果映射的值在境内关键词中，则视为境内
-        const isDomestic = DOMESTIC_KEYWORDS.includes(mapped);
-        if (isDomestic) {
-            return { zone: "境内", region: mapped, needThirdSelect: true };
-        } else {
-            return { zone: "境外", region: mapped, needThirdSelect: false };
-        }
-    }
-    // 最后使用关键词判断
-    const isDomestic = DOMESTIC_KEYWORDS.some(keyword => city.includes(keyword));
-    if (isDomestic) {
-        let region = city.split(/[\\s\\-]/)[0];
-        return { zone: "境内", region: region, needThirdSelect: true };
-    } else {
-        let country = city.split(/[\\s\\-]/)[0];
-        return { zone: "境外", region: country, needThirdSelect: false };
-    }
-}
-
-// ================= 选择器 ====================
-const SELECTORS = {
-    addBtnCSS: 'input.query.yuanjiao',
-    aircraftSelect: '//*[@id="ele7"]',
-    specialSelect: '#specialf',
-    certSelect: '#operationCertificate',
-    operateSelect: '#businessOperation',
-    purposeSelect: '//*[contains(text(), "非经营活动")]/following-sibling::*//select',
-    startDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input',
-    endDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input',
-    firstFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[1]',
-    firstFlightMinute: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[2]',
-    firstFlights: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[3]/div/input',
-    addSegmentBtn: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[1]/div/div/button',
-    secondFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[2]/div/input[1]',
-    secondFlightMinute: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[2]/div/input[2]',
-    secondFlights: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[3]/div/input',
-    detailArea: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[25]/div/input',
-    customer: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[27]/div/input',
-    base: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[28]/div/input',
-    operator: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[29]/div/input',
-    phone: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[30]/div/input',
-    contractSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[36]/div/select',
-    insuranceSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[37]/div/select',
-    submitBtn: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[40]/ul/li[2]/input',
-};
-
-// ================= 辅助函数 ====================
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function setSelectValue(selectElement, valueText) {
-    for (let i = 0; i < selectElement.options.length; i++) {
-        const opt = selectElement.options[i];
-        if (opt.text === valueText || opt.text.includes(valueText)) {
-            selectElement.selectedIndex = i;
-            selectElement.dispatchEvent(new Event('change', { bubbles: true }));
-            await sleep(300);
-            return true;
-        }
-    }
-    console.warn(`未找到选项: ${valueText}，可用选项：`, Array.from(selectElement.options).map(o => o.text));
-    return false;
-}
-
-function setDateInput(inputEl, dateStr) {
-    if (!inputEl) return false;
-    inputEl.value = dateStr;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-    inputEl.blur();
-    sleep(200);
-    return true;
-}
-
-// 通用航段填充函数
-async function fillSegmentSelects(container, city) {
-    const selects = container.querySelectorAll('select');
-    if (selects.length < 2) {
-        console.warn('航段容器内 select 数量不足');
-        return false;
-    }
-    
-    const info = getLocationInfo(city);
-    if (info.zone === "境外") {
-        await setSelectValue(selects[0], info.zone);
-        await setSelectValue(selects[1], info.region);
-        return true;
-    }
-    
-    // 境内
-    const detail = CITY_DETAIL_MAP[city];
-    if (!detail) {
-        console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
-        await setSelectValue(selects[0], "境内");
-        await setSelectValue(selects[1], info.region);
-        if (selects.length >= 3) {
-            const thirdSelect = selects[2];
-            let chooseBtn = null;
-            const possibleButtons = container.querySelectorAll('button, div, span');
-            for (let el of possibleButtons) {
-                if (el.innerText && el.innerText.includes('请选择')) {
-                    chooseBtn = el;
-                    break;
-                }
-            }
-            if (chooseBtn) {
-                chooseBtn.click();
-                await sleep(1000);
-            }
-            await sleep(1000);
-            if (thirdSelect.options.length > 1) {
-                console.warn(`未找到区县选项，第三个下拉框将保持当前选择（默认为第一个选项）`);
-            } else {
-                console.warn('第三个下拉框选项不足');
-            }
-        }
-        return true;
-    }
-    
-    await setSelectValue(selects[0], "境内");
-    await setSelectValue(selects[1], detail.province);
-    console.log(`等待第三个下拉框选项加载 (${detail.district})...`);
-    await sleep(1500);
-    
-    const newSelects = container.querySelectorAll('select');
-    if (newSelects.length < 3) {
-        console.warn('重新获取后第三个下拉框不存在');
-        return false;
-    }
-    const thirdSelect = newSelects[2];
-    console.log('第三个下拉框当前选项:', Array.from(thirdSelect.options).map(o => o.text));
-    
-    let targetIndex = -1;
-    for (let i = 0; i < thirdSelect.options.length; i++) {
-        if (thirdSelect.options[i].text.includes(detail.district)) {
-            targetIndex = i;
-            break;
-        }
-    }
-    
-    if (targetIndex !== -1) {
-        thirdSelect.selectedIndex = targetIndex;
-        thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
-    } else {
-        console.warn(`未找到区县选项: ${detail.district}，请手动选择或补充映射。`);
-    }
-    await sleep(500);
-    return true;
-}
-
-async function fillFirstSegmentSelects(city) {
-    const container = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[1]/div/div', 5000, true);
-    if (!container) {
-        console.warn('未找到第一个航段容器');
-        return false;
-    }
-    return fillSegmentSelects(container, city);
-}
-
-async function fillFirstSegmentTime(record) {
-    const hourInput = await waitForElement(SELECTORS.firstFlightHour, 5000, true);
-    const minuteInput = await waitForElement(SELECTORS.firstFlightMinute, 5000, true);
-    const flightsInput = await waitForElement(SELECTORS.firstFlights, 5000, true);
-    if (hourInput && minuteInput && flightsInput) {
-        hourInput.value = record.flight_hours.toString().padStart(2, '0');
-        minuteInput.value = record.flight_minutes.toString().padStart(2, '0');
-        flightsInput.value = 1;
-        hourInput.dispatchEvent(new Event('input', { bubbles: true }));
-        minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
-        flightsInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入第一个航段时间: ${record.flight_hours}:${record.flight_minutes}, 架次: 1`);
-        return true;
-    }
-    console.warn('无法填入第一个航段时间和架次');
-    return false;
-}
-
-async function fillSecondSegmentSelects(city) {
-    const container = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[1]/div/div', 5000, true);
-    if (!container) {
-        console.warn('未找到第二个航段容器');
-        return false;
-    }
-    return fillSegmentSelects(container, city);
-}
-
-async function fillSecondSegmentTime() {
-    const hourInput = await waitForElement(SELECTORS.secondFlightHour, 5000, true);
-    const minuteInput = await waitForElement(SELECTORS.secondFlightMinute, 5000, true);
-    const flightsInput = await waitForElement(SELECTORS.secondFlights, 5000, true);
-    if (hourInput && minuteInput && flightsInput) {
-        hourInput.value = '00';
-        minuteInput.value = '00';
-        flightsInput.value = 0;
-        hourInput.dispatchEvent(new Event('input', { bubbles: true }));
-        minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
-        flightsInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入第二个航段时间: 00:00, 架次: 0');
-        return true;
-    }
-    console.warn('无法填入第二个航段时间和架次');
-    return false;
-}
-
-function formatRegNumber(reg) {
-    if (reg.includes('-')) return reg;
-    const match = reg.match(/^([A-Z]+)(\\d+[A-Z]*)$/);
-    if (match) return `${match[1]}-${match[2]}`;
-    return reg;
-}
-
-async function selectAircraft(reg) {
-    const regForSelect = formatRegNumber(reg);
-    console.log(`尝试选择飞机: ${regForSelect}`);
-    
-    const airbox = await waitForElement('//*[@id="airbox"]', 10000, true);
-    if (!airbox) {
-        console.warn('未找到飞机选择对话框');
-        return false;
-    }
-    const doc = await getCurrentDoc();
-    if (!doc) return false;
-    
-    let span = doc.evaluate(`//span[text()='${regForSelect}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!span) {
-        span = doc.evaluate(`//span[contains(text(), '${regForSelect}')]`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (!span) {
-        console.warn(`未找到包含注册号 ${regForSelect} 的 span 元素`);
-        return false;
-    }
-    const li = span.closest('li');
-    if (!li) {
-        console.warn(`未找到注册号 ${regForSelect} 对应的 li`);
-        return false;
-    }
-    const checkbox = li.querySelector('input[type="checkbox"]');
-    if (!checkbox) {
-        console.warn(`未找到注册号 ${regForSelect} 的复选框`);
-        return false;
-    }
-    checkbox.click();
-    console.log('已勾选飞机复选框');
-    await sleep(300);
-    
-    let closeBtn = doc.evaluate('//*[@id="close7"]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) {
-        closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (!closeBtn) {
-        closeBtn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (closeBtn) {
-        closeBtn.click();
-        console.log('已关闭选择对话框');
-        await sleep(500);
-        return true;
-    } else {
-        console.warn('未找到关闭按钮，尝试按 ESC 关闭');
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-        await sleep(500);
-        return false;
-    }
-}
-
-async function processTomorrow() {
-    console.log('🚀 开始执行次日计划填报流程...');
-    const flightRecords = __FLIGHT_RECORDS__;
-    for (let i = 0; i < flightRecords.length; i++) {
-        const record = flightRecords[i];
-        console.log(`开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
-        try {
-            await processRecord(record);
-        } catch (err) {
-            console.error(`处理 ${record.reg} 时发生异常:`, err);
-            console.warn('跳过此条计划，继续下一条...');
-            const backBtn = await waitForElement('input.query.yuanjiao', 5000);
-            if (backBtn) {
-                console.log('已返回列表页');
-            } else {
-                console.warn('无法返回列表页，请手动刷新后继续');
-            }
-        }
-    }
-    console.log('🎉 次日计划填报完成！');
-}
-
-async function processRecord(record) {
-    console.log(`\\n开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
-
-    if (!(await ensureListPage())) {
-        console.error('无法返回列表页，终止流程');
-        return false;
-    }
-
-    const addBtn = await waitForElement(SELECTORS.addBtnCSS);
-    if (!addBtn) {
-        console.error('未找到添加按钮，终止流程');
-        return false;
-    }
-    addBtn.click();
-    console.log('已点击添加按钮，等待表单加载...');
-
-    const aircraftSelectBtn = await waitForElement(SELECTORS.aircraftSelect, 15000, true);
-    if (!aircraftSelectBtn) {
-        console.error('未找到飞机机号选择按钮，终止流程');
-        return false;
-    }
-    console.log('表单加载完成，找到飞机机号选择按钮');
-
-    aircraftSelectBtn.click();
-    if (!(await selectAircraft(record.reg))) {
-        console.error('选择飞机失败，终止流程');
-        return false;
-    }
-
-    const doc = await getCurrentDoc();
-    if (!doc) {
-        console.error('无法获取文档');
-        return false;
-    }
-    const specialSelect = doc.querySelector(SELECTORS.specialSelect);
-    if (specialSelect) await setSelectValue(specialSelect, "否");
-    else console.warn('未找到是否特殊任务飞行 select');
-
-    const certSelect = doc.querySelector(SELECTORS.certSelect);
-    if (certSelect) await setSelectValue(certSelect, "是");
-    else console.warn('未找到是否有运行合格证 select');
-
-    const operateSelect = doc.querySelector(SELECTORS.operateSelect);
-    if (operateSelect) await setSelectValue(operateSelect, "否");
-    else console.warn('未找到是否经营性作业 select');
-
-    const purposeSelect = await waitForElement(SELECTORS.purposeSelect, 10000, true);
-    if (purposeSelect) await setSelectValue(purposeSelect, record.purpose);
-    else console.warn('未找到用途下拉框');
-
-    const startDateInput = await waitForElement(SELECTORS.startDate, 5000, true);
-    const endDateInput = await waitForElement(SELECTORS.endDate, 5000, true);
-    if (startDateInput) setDateInput(startDateInput, record.start_date);
-    else console.warn('未找到服务开始日期输入框');
-    if (endDateInput) setDateInput(endDateInput, record.end_date);
-    else console.warn('未找到服务结束日期输入框');
-
-    await fillFirstSegmentSelects(record.dep_city);
-    await fillFirstSegmentTime(record);
-
-    const addSegmentBtn = await waitForElement(SELECTORS.addSegmentBtn, 5000, true);
-    if (addSegmentBtn) {
-        addSegmentBtn.click();
-        console.log('已点击添加航段按钮，等待新航段加载...');
-        await sleep(1000);
-        await fillSecondSegmentSelects(record.arr_city);
-        await fillSecondSegmentTime();
-    } else {
-        console.warn('未找到添加航段按钮');
-    }
-
-    const detailAreaInput = await waitForElement(SELECTORS.detailArea, 5000, true);
-    if (detailAreaInput) {
-        detailAreaInput.value = `${record.dep_city}-${record.arr_city}`;
-        detailAreaInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入详细作业地区');
-    } else console.warn('未找到详细作业地区输入框');
-
-    const customerInput = await waitForElement(SELECTORS.customer, 5000, true);
-    if (customerInput) {
-        customerInput.value = "天成商务航空有限公司";
-        customerInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入服务客户名称');
-    } else console.warn('未找到服务客户名称输入框');
-
-    const baseInput = await waitForElement(SELECTORS.base, 5000, true);
-    if (baseInput) {
-        baseInput.value = `${record.dep_city}机场-${record.arr_city}机场`;
-        baseInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入作业基地名称');
-    } else console.warn('未找到作业基地名称输入框');
-
-    const operatorInput = await waitForElement(SELECTORS.operator, 5000, true);
-    if (operatorInput) {
-        operatorInput.value = "张永一";
-        operatorInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入作业负责人姓名');
-    } else console.warn('未找到作业负责人姓名输入框');
-
-    const phoneInput = await waitForElement(SELECTORS.phone, 5000, true);
-    if (phoneInput) {
-        phoneInput.value = "18566725728";
-        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入负责人联系电话');
-    } else console.warn('未找到负责人联系电话输入框');
-
-    const contractSelect = await waitForElement(SELECTORS.contractSelect, 5000, true);
-    if (contractSelect) await setSelectValue(contractSelect, "已签订");
-    else console.warn('未找到合同订立情况下拉框');
-
-    const insuranceSelect = await waitForElement(SELECTORS.insuranceSelect, 5000, true);
-    if (insuranceSelect) await setSelectValue(insuranceSelect, "已参保");
-    else console.warn('未找到保险情况下拉框');
-
-    const submitBtn = await waitForElement(SELECTORS.submitBtn, 5000, true);
-    if (submitBtn) {
-        submitBtn.click();
-        console.log('已提交，等待弹窗...');
-        let confirmBtn = null;
-        for (let attempt = 0; attempt < 8; attempt++) {
-            confirmBtn = await waitForDialogConfirmButton(2000);
-            if (confirmBtn) break;
-            console.log(`等待确定按钮... 第${attempt+1}次尝试`);
-        }
-        if (confirmBtn) {
-            confirmBtn.click();
-            console.log('已点击确定按钮');
-        } else {
-            console.warn('未找到确定按钮，请手动点击');
-        }
-        console.log('等待返回列表页...');
-        await waitForElement(SELECTORS.addBtnCSS, 15000);
-        console.log(`处理完成：${record.reg}`);
-    } else {
-        console.warn('未找到提交按钮');
-    }
-    await sleep(2000);
-    return true;
-}
-"""
-
-# ---------- Streamlit UI ----------
-uploaded_file = st.file_uploader("📂 上传 Excel 文件（包含当日数据和次日计划）", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("选择 Excel 文件（.xlsx）", type=["xlsx"])
 
 if uploaded_file is not None:
-    try:
-        df = pd.read_excel(uploaded_file, header=1)
-        df.columns = df.columns.str.strip()
-        st.success("文件上传成功！")
-        st.subheader("📊 数据预览（前5行）")
-        st.dataframe(df.head())
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
+    st.success(f"文件加载成功，共 {len(df)} 条记录")
 
-        # 分离当日和次日数据：基于出发日期和实际到达
-        df["出发日期"] = pd.to_datetime(df["出发日期"]).dt.date
-        df_today = df[(df["出发日期"] == today) & (df["实际到达"].notna()) & (df["实际到达"] != "")].copy()
-        df_tomorrow = df[df["出发日期"] > today].copy()
+    if "实际到达" in df.columns:
+        df_valid = df[df["实际到达"].notna() & (df["实际到达"].astype(str).str.strip() != "")]
+        st.info(f"筛选出有实际到达时间的计划：{len(df_valid)} 条")
+    else:
+        st.error("Excel 中缺少“实际到达”列，请检查文件格式")
+        st.stop()
 
-        st.info(f"✅ 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}")
+    st.subheader("📊 将处理的计划")
+    if len(df_valid) > 0:
+        st.dataframe(df_valid[["飞机注册号", "出发城市", "到达城市", "实际飞行时间", "实际出发", "实际到达", "出发日期"]])
+    else:
+        st.warning("没有需要处理的计划（无实际到达时间）")
 
-        if len(df_today) == 0 and len(df_tomorrow) == 0:
-            st.error("❌ 没有找到任何有效数据，请检查文件格式。")
-            st.stop()
+    if len(df_valid) > 0:
+        records = df_valid.to_dict(orient="records")
+        for rec in records:
+            for k, v in rec.items():
+                if pd.isna(v):
+                    rec[k] = ""
+        js_data = json.dumps(records, ensure_ascii=False, indent=4)
 
-        # 显示当日和次日数据预览
-        with st.expander("📋 当日数据预览（将匹配并填入实际时间）"):
-            if len(df_today) > 0:
-                st.dataframe(df_today[["飞机注册号", "出发城市", "到达城市", "实际出发", "实际到达", "实际飞行时间"]])
-            else:
-                st.write("无当日数据")
+        # 生成脚本（进入 iframe）
+        script = f"""
+// ================= 自动生成的飞行计划脚本 =================
+// 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+// 待处理计划数: {len(df_valid)}
+// =========================================================
 
-        with st.expander("📋 次日计划预览（将新增备案）"):
-            if len(df_tomorrow) > 0:
-                st.dataframe(df_tomorrow[["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]])
-            else:
-                st.write("无次日计划")
+// ================= 配置区 =================
+// 目标 iframe ID
+const IFRAME_ID = 'main';
+// 在 iframe 内定位行：第二个 tbody 的 tr
+const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
+// 相对于行的列选择器
+const REG_SELECTOR = 'td:nth-child(6) div';
+const SEGMENT_SELECTOR = 'td:nth-child(7) div';
+const DATE_SELECTOR = 'td:nth-child(9)';
 
-        # 构建城市映射（基于次日计划）
-        city_map, city_detail_map = build_city_mappings(df_tomorrow)
-        city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
-        city_detail_map_json = json.dumps(city_detail_map, ensure_ascii=False, indent=4)
-        domestic_keywords_json = json.dumps(DOMESTIC_KEYWORDS, ensure_ascii=False)
+// 从 Excel 提取的数据
+const excelData = {js_data};
 
-        with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
-            step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=400, key="step1")
-        step2_template = STEP2_SCRIPT_TEMPLATE
+// ================= 辅助函数 =================
+function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
-        with st.spinner("正在生成脚本..."):
-            final_script = generate_js_script(
-                df_today, df_tomorrow, step1_template, step2_template,
-                city_map_json, city_detail_map_json, domestic_keywords_json
-            )
+function normalizeReg(reg) {{
+    return reg.replace(/[-\s]/g, '').trim();
+}}
 
-        st.subheader("📜 生成的合并 JavaScript 脚本")
-        st.code(final_script, language="javascript")
-        st.info("💡 复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。")
+// 获取 iframe 文档，确保加载完成
+async function getMainDoc() {{
+    const iframe = document.querySelector('#' + IFRAME_ID);
+    if (!iframe) {{
+        console.error('未找到 iframe #' + IFRAME_ID);
+        return null;
+    }}
+    let doc = iframe.contentDocument;
+    while (!doc || !doc.querySelector('body')) {{
+        await sleep(200);
+        doc = iframe.contentDocument;
+    }}
+    return doc;
+}}
+
+// 等待表格出现（在 iframe 内）
+async function waitForTable() {{
+    const start = Date.now();
+    while (Date.now() - start < 10000) {{
+        const doc = await getMainDoc();
+        if (!doc) return null;
+        const rows = doc.querySelectorAll(ROW_SELECTOR);
+        if (rows.length > 0) return rows;
+        await sleep(300);
+    }}
+    return null;
+}}
+
+// 获取第一个匹配的计划
+async function getFirstMatch() {{
+    const rows = await waitForTable();
+    if (!rows) return null;
+    console.log(`📋 找到 ${{rows.length}} 个计划行，开始匹配...`);
+    for (let i = 0; i < rows.length; i++) {{
+        const row = rows[i];
+        const regEl = row.querySelector(REG_SELECTOR);
+        const regNo = regEl ? normalizeReg(regEl.innerText.trim()) : null;
+        if (!regNo) continue;
+        const dateCell = row.querySelector(DATE_SELECTOR);
+        const webDate = dateCell ? dateCell.innerText.trim() : '';
+        const segEl = row.querySelector(SEGMENT_SELECTOR);
+        if (!segEl) continue;
+        const segText = segEl.innerText.trim();
+        const parts = segText.split(',');
+        if (parts.length < 2) continue;
+        const depPart = parts[0].trim();
+        const arrPart = parts[1].trim();
+        const extract = (part) => {{
+            let afterPrefix = part.replace(/^(境内|境外)-/, '');
+            const segments = afterPrefix.split('-');
+            const keywords = [];
+            for (let seg of segments) {{
+                const words = seg.split(/\\s+/);
+                for (let w of words) if (w) keywords.push(w);
+            }}
+            return keywords;
+        }};
+        const depKeywords = extract(depPart);
+        const arrKeywords = extract(arrPart);
+        console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，日期 ${{webDate}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
+        const matched = excelData.find(r => 
+            normalizeReg(r["飞机注册号"]) === regNo &&
+            (() => {{
+                const depCity = r["出发城市"] || "";
+                const arrCity = r["到达城市"] || "";
+                const depMatch = depKeywords.some(kw => depCity.includes(kw));
+                const arrMatch = arrKeywords.some(kw => arrCity.includes(kw));
+                return depMatch && arrMatch;
+            }})() &&
+            r["出发日期"] === webDate
+        );
+        if (matched) {{
+            console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}`);
+            return {{ row, matchedExcel: matched }};
+        }}
+    }}
+    console.log('❌ 没有找到任何匹配的计划');
+    return null;
+}}
+
+// 等待元素（XPath）出现，在 iframe 内查找
+async function waitForElement(xpath, timeout = 15000) {{
+    const start = Date.now();
+    while (Date.now() - start < timeout) {{
+        const doc = await getMainDoc();
+        if (!doc) return null;
+        const el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (el) return el;
+        await sleep(300);
+    }}
+    console.warn(`⚠️ 等待元素超时: ${{xpath}}`);
+    return null;
+}}
+
+// 设置日期输入框
+function setDateInput(inputEl, dateStr) {{
+    if (!inputEl) return false;
+    inputEl.value = dateStr;
+    inputEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    inputEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    inputEl.blur();
+    return true;
+}}
+
+// 设置 select 选择指定文本
+async function setSelectValue(selectEl, valueText) {{
+    if (!selectEl) return false;
+    for (let i = 0; i < selectEl.options.length; i++) {{
+        const opt = selectEl.options[i];
+        if (opt.text === valueText || opt.text.includes(valueText)) {{
+            selectEl.selectedIndex = i;
+            selectEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            await sleep(300);
+            console.log(`✅ 已选择 "${{valueText}}"`);
+            return true;
+        }}
+    }}
+    console.warn(`⚠️ 未找到选项 "${{valueText}}"`);
+    return false;
+}}
+
+// 从城市名提取机场名称（用于境外）
+function getAirportNameFromCity(city) {{
+    const firstPart = city.split(/\\s+/)[0];
+    return firstPart + "机场";
+}}
+
+// 设置数值输入框
+function setNumberInput(inputEl, value) {{
+    if (!inputEl) return false;
+    inputEl.value = value;
+    inputEl.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    inputEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    inputEl.blur();
+    return true;
+}}
+
+// 境内/境外判断及映射
+const CITY_MAP = {{ "上海虹桥": "上海", "成都双流": "四川", "哈萨克斯坦阿拉木图": "哈萨克斯坦", "香港": "香港", "贵阳龙洞堡": "贵州" }};
+
+function getLocationInfo(city) {{
+    const domesticKeywords = ["北京","上海","天津","重庆","广州","深圳","珠海","汕头","佛山","江门","湛江","茂名","肇庆","惠州","梅州","汕尾","河源","阳江","清远","东莞","中山","潮州","揭阳","云浮","南京","无锡","徐州","常州","苏州","南通","连云港","淮安","盐城","扬州","镇江","泰州","宿迁","杭州","宁波","温州","嘉兴","湖州","绍兴","金华","衢州","舟山","台州","丽水","合肥","芜湖","蚌埠","淮南","马鞍山","淮北","铜陵","安庆","黄山","滁州","阜阳","宿州","六安","亳州","池州","宣城","福州","厦门","莆田","三明","泉州","漳州","南平","龙岩","宁德","南昌","景德镇","萍乡","九江","新余","鹰潭","赣州","吉安","宜春","抚州","上饶","济南","青岛","淄博","枣庄","东营","烟台","潍坊","济宁","泰安","威海","日照","临沂","德州","聊城","滨州","菏泽","郑州","开封","洛阳","平顶山","安阳","鹤壁","新乡","焦作","濮阳","许昌","漯河","三门峡","南阳","商丘","信阳","周口","驻马店","武汉","黄石","十堰","宜昌","襄阳","鄂州","荆门","孝感","荆州","黄冈","咸宁","随州","长沙","株洲","湘潭","衡阳","邵阳","岳阳","常德","张家界","益阳","郴州","永州","怀化","娄底","成都","自贡","攀枝花","泸州","德阳","绵阳","广元","遂宁","内江","乐山","南充","眉山","宜宾","广安","达州","雅安","巴中","资阳","贵阳","六盘水","遵义","安顺","毕节","铜仁","昆明","曲靖","玉溪","保山","昭通","丽江","普洱","临沧","西安","铜川","宝鸡","咸阳","渭南","延安","汉中","榆林","安康","商洛","兰州","嘉峪关","金昌","白银","天水","武威","张掖","平凉","酒泉","庆阳","定西","陇南","西宁","海东","银川","石嘴山","吴忠","固原","中卫","乌鲁木齐","克拉玛依","吐鲁番","哈密","昌吉","博尔塔拉","巴音郭楞","阿克苏","克孜勒苏","喀什","和田","伊犁","塔城","阿勒泰","呼和浩特","包头","乌海","赤峰","通辽","鄂尔多斯","呼伦贝尔","巴彦淖尔","乌兰察布","南宁","柳州","桂林","梧州","北海","防城港","钦州","贵港","玉林","百色","贺州","河池","来宾","崇左","海口","三亚","三沙","儋州","石家庄","唐山","秦皇岛","邯郸","邢台","保定","张家口","承德","沧州","廊坊","衡水","太原","大同","阳泉","长治","晋城","朔州","晋中","运城","忻州","临汾","吕梁","沈阳","大连","鞍山","抚顺","本溪","丹东","锦州","营口","阜新","辽阳","盘锦","铁岭","朝阳","葫芦岛","长春","吉林","四平","辽源","通化","白山","松原","白城","哈尔滨","齐齐哈尔","鸡西","鹤岗","双鸭山","大庆","伊春","佳木斯","七台河","牡丹江","黑河","绥化"];
+    const isDomestic = domesticKeywords.some(keyword => city.includes(keyword));
+    if (isDomestic) {{
+        let region = CITY_MAP[city];
+        if (!region) {{ const match = city.match(/^([^\\s\\-]+)/); region = match ? match[1] : city; }}
+        return {{ zone: "境内", region: region }};
+    }} else {{
+        let country = CITY_MAP[city];
+        if (!country) {{ const parts = city.split(/[\\s\\-]/); country = parts[0]; }}
+        return {{ zone: "境外", region: country }};
+    }}
+}}
+
+// 处理起飞/降落区块
+async function handleAirportBlock(blockIndex, city, label) {{
+    let firstSelectXPath, secondSelectXPath;
+    if (blockIndex === 1) {{
+        firstSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[1]/div/select[1]';
+        secondSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[1]/div/select[2]';
+    }} else {{
+        firstSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[1]/div/select[1]';
+        secondSelectXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[1]/div/select[2]';
+    }}
+    console.log(`⏳ 处理 ${{label}} 区块...`);
+    const firstSelect = await waitForElement(firstSelectXPath, 10000);
+    if (!firstSelect) {{ console.error(`❌ 未找到 ${{label}} 第一个选择框`); return false; }}
+    const targetValue = blockIndex === 1 ? '起飞机场' : '降落机场';
+    await setSelectValue(firstSelect, targetValue);
+    const secondSelect = await waitForElement(secondSelectXPath, 10000);
+    if (!secondSelect) {{ console.error(`❌ 未找到 ${{label}} 第二个选择框`); return false; }}
+    const info = getLocationInfo(city);
+    if (info.zone === "境内") {{
+        console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
+        const selected = await setSelectValue(secondSelect, city);
+        if (!selected) {{ console.error(`❌ 未找到匹配的机场选项`); return false; }}
+        return true;
+    }} else {{
+        console.log(`🛫 ${{label}} 境外机场: ${{city}}，选择“其它”...`);
+        const otherSelected = await setSelectValue(secondSelect, '其它');
+        if (!otherSelected) {{ console.error(`❌ 无法选择“其它”`); return false; }}
+        await sleep(800);
+        let zoneSelectXPath, zoneSelect2XPath, airportNameInputXPath;
+        if (blockIndex === 2) {{
+            zoneSelectXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[1]';
+            zoneSelect2XPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/select[2]';
+            airportNameInputXPath = '/html/body/div/div[1]/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[2]/div/input';
+        }} else {{
+            zoneSelectXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[1]`;
+            zoneSelect2XPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/select[2]`;
+            airportNameInputXPath = `/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[2]/div/input`;
+        }}
+        const zoneSelect = await waitForElement(zoneSelectXPath, 10000);
+        if (zoneSelect) await setSelectValue(zoneSelect, '境外');
+        const zoneSelect2 = await waitForElement(zoneSelect2XPath, 10000);
+        if (zoneSelect2) await setSelectValue(zoneSelect2, '境外');
+        const airportNameInput = await waitForElement(airportNameInputXPath, 10000);
+        if (airportNameInput) {{
+            const airportName = getAirportNameFromCity(city);
+            console.log(`📝 填入 ${{label}} 机场名称: ${{airportName}}`);
+            setNumberInput(airportNameInput, airportName);
+        }}
+        return true;
+    }}
+}}
+
+// 第二个飞行时间全部填 0
+async function handleSecondFlightTime() {{
+    const hourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[1]';
+    const minuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[5]/div/input[2]';
+    const countXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[2]/div[2]/div/div[6]/div/input';
+    const hourInput = await waitForElement(hourXPath, 10000);
+    const minuteInput = await waitForElement(minuteXPath, 10000);
+    const countInput = await waitForElement(countXPath, 10000);
+    if (hourInput && minuteInput && countInput) {{
+        console.log('⏱️ 填入第二个飞行时间: 00:00，飞行架次数: 0');
+        setNumberInput(hourInput, '0');
+        setNumberInput(minuteInput, '0');
+        setNumberInput(countInput, '0');
+        return true;
+    }} else {{
+        console.warn('⚠️ 未找到第二个飞行时间输入框');
+        return false;
+    }}
+}}
+
+// 详细作业区
+async function handleDetailArea(depCity, arrCity) {{
+    const detailXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[16]/div/input';
+    const detailInput = await waitForElement(detailXPath, 10000);
+    if (!detailInput) {{ console.error('❌ 未找到详细作业区输入框'); return false; }}
+    const depAirport = depCity + "机场";
+    const arrAirport = arrCity + "机场";
+    const detailText = `${{depAirport}}-${{arrAirport}}`;
+    console.log(`📝 填入详细作业区: ${{detailText}}`);
+    setNumberInput(detailInput, detailText);
+    return true;
+}}
+
+// 等待返回列表页
+async function waitForReturnToList(timeout = 300000) {{
+    const start = Date.now();
+    console.log('⏳ 等待您手动点击“提交”后返回列表页...');
+    while (Date.now() - start < timeout) {{
+        const doc = await getMainDoc();
+        if (!doc) return false;
+        const rows = doc.querySelectorAll(ROW_SELECTOR);
+        if (rows.length > 0) {{
+            console.log('✅ 已返回列表页');
+            return true;
+        }}
+        await sleep(2000);
+    }}
+    console.error('❌ 等待超时，未返回列表页');
+    return false;
+}}
+
+// 处理单个计划
+async function processOnePlan(planRow, matchedExcel) {{
+    console.log(`\\n🔧 开始处理计划：机号 ${{matchedExcel["飞机注册号"]}}`);
+    const execBtn = planRow.querySelector('.icon-qidong, [class*="icon-qidong"]');
+    if (!execBtn) {{ console.error('❌ 未找到“执行”按钮，跳过'); return false; }}
+    console.log('🔘 点击“执行”按钮...');
+    execBtn.click();
+    await sleep(2000);  // 等待表单出现
+
+    // 等待日期输入框
+    const startDateXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input';
+    const endDateXPath   = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input';
+    console.log('⏳ 等待日期输入框...');
+    const startInput = await waitForElement(startDateXPath, 15000);
+    const endInput   = await waitForElement(endDateXPath, 15000);
+    if (!startInput || !endInput) {{
+        console.error('❌ 未找到日期输入框，可能表单未正确加载');
+        return false;
+    }}
+    const startDate = matchedExcel["出发日期"];
+    const endDate   = matchedExcel["到达日期"];
+    console.log(`📅 填入作业开始日期: ${{startDate}}`);
+    console.log(`📅 填入作业结束日期: ${{endDate}}`);
+    setDateInput(startInput, startDate);
+    setDateInput(endInput, endDate);
+
+    // 起飞、降落区块
+    const depCity = matchedExcel["出发城市"];
+    if (!(await handleAirportBlock(1, depCity, "起飞"))) return false;
+    const arrCity = matchedExcel["到达城市"];
+    if (!(await handleAirportBlock(2, arrCity, "降落"))) return false;
+
+    // 第一个飞行时间（实际飞行时间）
+    const actualFlightTime = matchedExcel["实际飞行时间"];
+    if (actualFlightTime && actualFlightTime.includes(':')) {{
+        const flightHourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[5]/div/input[1]';
+        const flightMinuteXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[5]/div/input[2]';
+        const flightCountXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[6]/div/input';
+        const hourInput = await waitForElement(flightHourXPath, 10000);
+        const minuteInput = await waitForElement(flightMinuteXPath, 10000);
+        const countInput = await waitForElement(flightCountXPath, 10000);
+        if (hourInput && minuteInput && countInput) {{
+            const [hour, minute] = actualFlightTime.split(':');
+            console.log(`⏱️ 填入第一个飞行时间: ${{hour}}:${{minute}}，飞行架次数: 1`);
+            setNumberInput(hourInput, hour);
+            setNumberInput(minuteInput, minute);
+            setNumberInput(countInput, '1');
+        }} else console.warn('⚠️ 未找到第一个飞行时间输入框');
+    }} else console.warn(`⚠️ 实际飞行时间 "${{actualFlightTime}}" 格式不正确`);
+
+    // 第二个飞行时间
+    await handleSecondFlightTime();
+    // 详细作业区
+    await handleDetailArea(depCity, arrCity);
+
+    console.log('✅ 所有字段填写完成，请手动点击“提交”按钮。');
+    const returned = await waitForReturnToList();
+    if (!returned) {{
+        console.error('❌ 未能检测到返回列表页，请手动返回后继续运行脚本。');
+        return false;
+    }}
+    return true;
+}}
+
+// ================= 主流程 =================
+(async () => {{
+    console.log('🚀 开始执行自动化流程...');
+    let processedCount = 0;
+    while (true) {{
+        const match = await getFirstMatch();
+        if (!match) {{
+            console.log('🎉 没有更多匹配的计划，流程结束。');
+            break;
+        }}
+        processedCount++;
+        console.log(`\\n========== 处理第 ${{processedCount}} 个匹配计划 ==========`);
+        const success = await processOnePlan(match.row, match.matchedExcel);
+        if (!success) {{
+            console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
+            // 尝试强制返回列表页（点击“返回”按钮）
+            const backBtnXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input';
+            const backBtn = await waitForElement(backBtnXPath, 3000);
+            if (backBtn) backBtn.click();
+            await sleep(2000);
+        }} else {{
+            console.log(`✅ 第 ${{processedCount}} 个计划处理完成并已返回列表页。`);
+        }}
+        await sleep(1000);
+    }}
+    console.log('\\n🎉 所有匹配计划处理完毕！');
+}})();
+"""
+
+        st.subheader("📜 生成的 JavaScript 脚本")
+        st.code(script, language="javascript")
+        st.info("复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。")
         st.download_button(
             label="💾 下载脚本文件 (.js)",
-            data=final_script,
-            file_name="combined_flight_plan.js",
+            data=script,
+            file_name="flight_plan_script.js",
             mime="application/javascript"
         )
-    except Exception as e:
-        st.error(f"处理文件时出错: {e}")
 else:
-    st.info("请上传 Excel 文件开始。")
+    st.info("请上传 Excel 文件以开始生成脚本。")
