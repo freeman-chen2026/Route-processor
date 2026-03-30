@@ -19,184 +19,191 @@ st.markdown("""
 beijing_tz = pytz.timezone('Asia/Shanghai')
 today = datetime.now(beijing_tz).date()
 
-# ---------- 当日数据处理脚本模板 ----------
+# ---------- 中国所有省份名称（用于境内判断） ----------
+ALL_PROVINCES = [
+    "北京", "天津", "上海", "重庆", "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏",
+    "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南",
+    "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西", "宁夏", "新疆", "西藏"
+]
+
+# ---------- 常见地级市（用于增强判断） ----------
+MAJOR_CITIES = [
+    "广州", "深圳", "成都", "西安", "三亚", "杭州", "南京", "武汉", "长沙", "郑州",
+    "青岛", "大连", "厦门", "福州", "昆明", "贵阳", "南宁", "海口", "兰州", "西宁",
+    "银川", "乌鲁木齐", "拉萨", "呼和浩特", "哈尔滨", "长春", "沈阳", "石家庄",
+    "太原", "济南", "合肥", "南昌"
+]
+DOMESTIC_KEYWORDS = list(set(ALL_PROVINCES + MAJOR_CITIES))
+
+# ---------- 城市映射表（根据 Excel 自动生成，但这里预先定义常见映射） ----------
+BASE_CITY_MAP = {
+    "杭州萧山": "浙江",
+    "厦门高崎": "福建",
+    "济南遥墙": "山东",
+    "新加坡实里达": "新加坡",
+    "深圳宝安": "广东",
+    "香港": "香港",
+    "玉林福绵": "广西",
+    "上海虹桥": "上海",
+    "北京首都": "北京",
+    "青岛胶东": "山东"
+}
+
+BASE_CITY_DETAIL_MAP = {
+    "北京首都": {"province": "北京", "district": "顺义区"},
+    "北京大兴": {"province": "北京", "district": "大兴区"},
+    "天津滨海": {"province": "天津", "district": "滨海新区"},
+    "上海虹桥": {"province": "上海", "district": "闵行区"},
+    "上海浦东": {"province": "上海", "district": "浦东新区"},
+    "重庆江北": {"province": "重庆", "district": "江北区"},
+    "杭州萧山": {"province": "浙江", "district": "杭州"},
+    "厦门高崎": {"province": "福建", "district": "厦门"},
+    "济南遥墙": {"province": "山东", "district": "济南"},
+    "深圳宝安": {"province": "广东", "district": "深圳"},
+    "玉林福绵": {"province": "广西", "district": "玉林"},
+    "青岛胶东": {"province": "山东", "district": "青岛"}
+}
+
+# ---------- 辅助函数 ----------
+def parse_flight_time(time_str):
+    try:
+        parts = time_str.split(':')
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        return hours, minutes
+    except:
+        return 0, 0
+
+def build_city_mappings(df):
+    """根据数据动态扩展映射，但保留基础映射"""
+    cities = set()
+    for _, row in df.iterrows():
+        dep = str(row["出发城市"]).strip()
+        arr = str(row["到达城市"]).strip()
+        cities.add(dep)
+        cities.add(arr)
+
+    city_map = BASE_CITY_MAP.copy()
+    city_detail_map = BASE_CITY_DETAIL_MAP.copy()
+
+    for city in cities:
+        if city in city_map:
+            continue
+        # 境内判断：如果城市名包含省份或主要城市关键词，则视为境内
+        is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
+        if is_domestic:
+            # 尝试提取省份（取第一个词）
+            province = city.split()[0] if city.split() else city
+            city_map[city] = province
+            city_detail_map[city] = {"province": province, "district": ""}
+        else:
+            # 境外：取第一个词作为国家名
+            country = city.split()[0] if city.split() else city
+            city_map[city] = country
+            # 境外不需要 detail_map
+    return city_map, city_detail_map
+
+def generate_flight_records(df):
+    records = []
+    for _, row in df.iterrows():
+        purpose_raw = row.get("用途", "")
+        if "维修" in purpose_raw or "调机" in purpose_raw:
+            purpose = "调机"
+        else:
+            purpose = "自用飞行"
+        start_date = str(row["出发日期"])
+        end_date = str(row["到达日期"])
+        flight_time = row.get("预计飞行时间", "")
+        hours, minutes = parse_flight_time(flight_time)
+        dep_city = str(row["出发城市"]).strip()
+        arr_city = str(row["到达城市"]).strip()
+        reg_raw = str(row["飞机注册号"]).strip()
+        record = {
+            "reg": reg_raw,
+            "start_date": start_date,
+            "end_date": end_date,
+            "purpose": purpose,
+            "dep_city": dep_city,
+            "arr_city": arr_city,
+            "flight_hours": hours,
+            "flight_minutes": minutes
+        }
+        records.append(record)
+    return json.dumps(records, ensure_ascii=False, indent=4)
+
+def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, city_map_json, city_detail_map_json, domestic_keywords_json):
+    # 生成当日数据的 JSON
+    today_records = []
+    for _, row in df_today.iterrows():
+        record = {
+            "飞机注册号": row.get("飞机注册号", ""),
+            "出发城市": row.get("出发城市", ""),
+            "到达城市": row.get("到达城市", ""),
+            "实际飞行时间": row.get("实际飞行时间", ""),
+            "实际出发": str(row.get("实际出发", "")),
+            "实际到达": str(row.get("实际到达", ""))
+        }
+        today_records.append(record)
+    today_json = json.dumps(today_records, ensure_ascii=False, indent=4)
+
+    # 生成次日计划的 JSON
+    tomorrow_json = generate_flight_records(df_tomorrow)
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 替换当日脚本占位符
+    today_script = step1_template.replace("__EXCEL_DATA__", today_json)
+    today_script = today_script.replace("__DATETIME__", now)
+    today_script = today_script.replace("__COUNT__", str(len(df_today)))
+    # 替换次日脚本占位符
+    tomorrow_script = step2_template.replace("__FLIGHT_RECORDS__", tomorrow_json)
+    tomorrow_script = tomorrow_script.replace("__DATETIME__", now)
+    tomorrow_script = tomorrow_script.replace("__COUNT__", str(len(df_tomorrow)))
+    tomorrow_script = tomorrow_script.replace("__CITY_MAP__", city_map_json)
+    tomorrow_script = tomorrow_script.replace("__CITY_DETAIL_MAP__", city_detail_map_json)
+    tomorrow_script = tomorrow_script.replace("__DOMESTIC_KEYWORDS__", domestic_keywords_json)
+
+    combined_script = f"""
+// ==================== 自动生成的合并脚本 ====================
+// 生成时间: {now}
+// 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}
+// ============================================================
+
+// ------------------ 当日数据处理部分 ------------------
+{today_script}
+
+// ------------------ 次日计划填报部分 ------------------
+{tomorrow_script}
+
+// ------------------ 主流程：顺序执行 ------------------
+(async () => {{
+    console.log("========== 开始执行当日数据处理 ==========");
+    await processToday();
+    console.log("========== 当日数据处理完成，开始执行次日计划填报 ==========");
+    await processTomorrow();
+    console.log("========== 所有任务执行完毕 ==========");
+}})();
+"""
+    return combined_script
+
+# ---------- 当日数据处理脚本模板（用户可编辑） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
-// 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
-// 请根据实际页面结构调整以下选择器：
-//   ROW_SELECTOR: 表格行选择器
-//   REG_SELECTOR: 飞机注册号所在列的选择器
-//   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器
-//   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 button:contains("编辑")）
-//   表单内字段选择器（见 fillActualArrival 函数）
-
-// 配置区
-const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
-const REG_SELECTOR = 'td:nth-child(6) div';
-const SEGMENT_SELECTOR = 'td:nth-child(7) div';
-const EDIT_BUTTON_SELECTOR = 'button:contains("编辑")';
-
-// 从 Excel 提取的数据（包含实际到达时间）
-const excelData = __EXCEL_DATA__;
-
-// ================= 辅助函数 =================
-async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-async function getCurrentDoc() {
-    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
-    let iframe = null;
-    for (let sel of iframeSelectors) {
-        iframe = document.querySelector(sel);
-        if (iframe) break;
-    }
-    if (!iframe) {
-        console.warn('未找到 iframe，可能是页面未加载完成，稍后重试');
-        return null;
-    }
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }
-    return doc;
-}
-
-async function waitForElement(selector, timeout = 15000, isXPath = false) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const doc = await getCurrentDoc();
-        if (!doc) {
-            await sleep(500);
-            continue;
-        }
-        let el;
-        if (isXPath) {
-            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        } else {
-            el = doc.querySelector(selector);
-        }
-        if (el) return el;
-        await sleep(500);
-    }
-    console.warn(`等待元素超时: ${selector}`);
-    return null;
-}
-
-async function clickEditButton(row) {
-    const editBtn = row.querySelector(EDIT_BUTTON_SELECTOR);
-    if (!editBtn) {
-        console.warn('未找到编辑按钮');
-        return false;
-    }
-    editBtn.click();
-    await sleep(1000);
-    return true;
-}
-
-async function fillActualArrival(record) {
-    const doc = await getCurrentDoc();
-    if (!doc) return false;
-    const actualArrivalInput = doc.querySelector('#actualArrival') || 
-                               doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (actualArrivalInput) {
-        actualArrivalInput.value = record.实际到达;
-        actualArrivalInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入实际到达时间: ${record.实际到达}`);
-    } else {
-        console.warn('未找到实际到达输入框，跳过该字段');
-    }
-    const actualDepartureInput = doc.querySelector('#actualDeparture') ||
-                                 doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (actualDepartureInput && record.实际出发) {
-        actualDepartureInput.value = record.实际出发;
-        actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
-                                  doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (actualFlightTimeInput && record.实际飞行时间) {
-        actualFlightTimeInput.value = record.实际飞行时间;
-        actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
-                      doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (submitBtn) {
-        submitBtn.click();
-        console.log('已提交保存');
-        await sleep(2000);
-        await waitForElement('input.query.yuanjiao', 15000);
-        return true;
-    }
-    console.warn('未找到保存按钮');
-    return false;
-}
-
-async function processOnePlan(row, matchedExcel) {
-    console.log(`处理匹配计划: ${matchedExcel.飞机注册号} ${matchedExcel.出发城市} -> ${matchedExcel.到达城市}`);
-    if (!await clickEditButton(row)) {
-        console.error('无法点击编辑按钮，跳过');
-        return false;
-    }
-    const success = await fillActualArrival(matchedExcel);
-    if (!success) {
-        console.error('填写失败');
-    }
-    return success;
-}
-
-async function findAllMatches() {
-    const doc = await getCurrentDoc();
-    if (!doc) {
-        console.warn('无法获取文档，跳过当日数据处理');
-        return [];
-    }
-    const rows = doc.querySelectorAll(ROW_SELECTOR);
-    const matches = [];
-    for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const regCell = row.querySelector(REG_SELECTOR);
-        const segmentCell = row.querySelector(SEGMENT_SELECTOR);
-        if (!regCell || !segmentCell) continue;
-        const reg = regCell.innerText.trim();
-        const segment = segmentCell.innerText.trim();
-        for (const record of excelData) {
-            const excelReg = record.飞机注册号;
-            const excelSegment = `${record.出发城市} -> ${record.到达城市}`;
-            if (reg === excelReg && segment === excelSegment) {
-                matches.push({ row, matchedExcel: record });
-                break;
-            }
-        }
-    }
-    console.log(`找到 ${matches.length} 个匹配计划`);
-    return matches;
-}
-
+// 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
+// 并使用 __EXCEL_DATA__ 作为从 Excel 提取的数据数组。
 async function processToday() {
-    console.log('🚀 开始执行当日数据处理流程...');
-    const matches = await findAllMatches();
-    if (matches.length === 0) {
-        console.warn('⚠️ 没有找到任何匹配的计划，跳过当日数据处理');
-        return;
+    const excelData = __EXCEL_DATA__;
+    console.log(`📅 开始处理当日 ${excelData.length} 条记录...`);
+    // 在此处添加您的实际处理逻辑
+    // 示例：循环打印数据
+    for (let i = 0; i < excelData.length; i++) {
+        const record = excelData[i];
+        console.log(`处理记录: ${record.飞机注册号} ${record.出发城市} -> ${record.到达城市}`);
     }
-    for (let i = 0; i < matches.length; i++) {
-        const { row, matchedExcel } = matches[i];
-        console.log(`\\n========== 处理第 ${i+1}/${matches.length} 个匹配计划 ==========`);
-        try {
-            const success = await processOnePlan(row, matchedExcel);
-            if (!success) {
-                console.error(`⚠️ 第 ${i+1} 个计划处理失败，跳过继续下一个...`);
-            } else {
-                console.log(`✅ 第 ${i+1} 个计划处理完成并已返回列表页。`);
-            }
-        } catch (err) {
-            console.error(`处理第 ${i+1} 个计划时发生异常:`, err);
-        }
-    }
-    console.log('🎉 当日数据处理完成！');
+    console.log("🎉 当日数据处理完成！");
 }
 """
 
-# ---------- 次日计划填报脚本模板（已修复正则表达式转义） ----------
+# ---------- 次日计划填报脚本模板（完整内嵌，已修复正则和境内判断） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -222,6 +229,7 @@ async function getCurrentDoc() {
     return doc;
 }
 
+// ================= 等待元素出现 ====================
 async function waitForElement(selector, timeout = 15000, isXPath = false) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -243,6 +251,7 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
     return null;
 }
 
+// ================= 弹窗确定按钮搜索 ====================
 async function waitForDialogConfirmButton(timeout = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -261,6 +270,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {
     return null;
 }
 
+// ================= 确保当前在列表页 ====================
 async function ensureListPage() {
     const btn = await waitForElement('input.query.yuanjiao', 15000);
     if (btn) return true;
@@ -284,10 +294,9 @@ async function ensureListPage() {
     }
 }
 
-// ================= 城市映射（直接使用对象，避免正则转义问题） =================
+// ================= 城市到地区/国家的映射 ====================
 const CITY_MAP = __CITY_MAP__;
 const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
-
 const DOMESTIC_KEYWORDS = __DOMESTIC_KEYWORDS__;
 
 function getLocationInfo(city) {
@@ -295,14 +304,14 @@ function getLocationInfo(city) {
     if (isDomestic) {
         let region = CITY_MAP[city];
         if (!region) {
-            const match = city.match(/^([^\\s\\-]+)/);
+            const match = city.match(new RegExp('^([^\\\\s\\\\-]+)'));
             region = match ? match[1] : city;
         }
         return { zone: "境内", region: region, needThirdSelect: true };
     } else {
         let country = CITY_MAP[city];
         if (!country) {
-            const parts = city.split(/[\\s\\-]/);
+            const parts = city.split(new RegExp('[\\\\s\\\\-]'));
             country = parts[0];
         }
         return { zone: "境外", region: country, needThirdSelect: false };
@@ -365,6 +374,7 @@ function setDateInput(inputEl, dateStr) {
     return true;
 }
 
+// 通用航段填充函数
 async function fillSegmentSelects(container, city) {
     const selects = container.querySelectorAll('select');
     if (selects.length < 2) {
@@ -718,95 +728,6 @@ async function processRecord(record) {
 }
 """
 
-# ---------- 辅助函数 ----------
-def parse_flight_time(time_str):
-    try:
-        parts = time_str.split(':')
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        return hours, minutes
-    except:
-        return 0, 0
-
-def generate_js_script(df_today, df_tomorrow, city_map, city_detail_map, domestic_keywords):
-    # 生成当日数据的 JSON
-    today_records = []
-    for _, row in df_today.iterrows():
-        record = {
-            "飞机注册号": row.get("飞机注册号", ""),
-            "出发城市": row.get("出发城市", ""),
-            "到达城市": row.get("到达城市", ""),
-            "实际飞行时间": row.get("实际飞行时间", ""),
-            "实际出发": str(row.get("实际出发", "")),
-            "实际到达": str(row.get("实际到达", ""))
-        }
-        today_records.append(record)
-    today_json = json.dumps(today_records, ensure_ascii=False, indent=4)
-
-    # 生成次日计划的 JSON
-    tomorrow_records = []
-    for _, row in df_tomorrow.iterrows():
-        purpose_raw = row.get("用途", "")
-        if "维修" in purpose_raw or "调机" in purpose_raw:
-            purpose = "调机"
-        else:
-            purpose = "自用飞行"
-        start_date = str(row["出发日期"])
-        end_date = str(row["到达日期"])
-        flight_time = row.get("预计飞行时间", "")
-        hours, minutes = parse_flight_time(flight_time)
-        dep_city = str(row["出发城市"]).strip()
-        arr_city = str(row["到达城市"]).strip()
-        reg_raw = str(row["飞机注册号"]).strip()
-        record = {
-            "reg": reg_raw,
-            "start_date": start_date,
-            "end_date": end_date,
-            "purpose": purpose,
-            "dep_city": dep_city,
-            "arr_city": arr_city,
-            "flight_hours": hours,
-            "flight_minutes": minutes
-        }
-        tomorrow_records.append(record)
-    tomorrow_json = json.dumps(tomorrow_records, ensure_ascii=False, indent=4)
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # 替换当日脚本占位符
-    today_script = DEFAULT_STEP1_TEMPLATE.replace("__EXCEL_DATA__", today_json)
-    today_script = today_script.replace("__DATETIME__", now)
-    today_script = today_script.replace("__COUNT__", str(len(df_today)))
-    # 替换次日脚本占位符
-    tomorrow_script = STEP2_SCRIPT_TEMPLATE.replace("__FLIGHT_RECORDS__", tomorrow_json)
-    tomorrow_script = tomorrow_script.replace("__DATETIME__", now)
-    tomorrow_script = tomorrow_script.replace("__COUNT__", str(len(df_tomorrow)))
-    tomorrow_script = tomorrow_script.replace("__CITY_MAP__", json.dumps(city_map, ensure_ascii=False))
-    tomorrow_script = tomorrow_script.replace("__CITY_DETAIL_MAP__", json.dumps(city_detail_map, ensure_ascii=False))
-    tomorrow_script = tomorrow_script.replace("__DOMESTIC_KEYWORDS__", json.dumps(domestic_keywords, ensure_ascii=False))
-
-    combined_script = f"""
-// ==================== 自动生成的合并脚本 ====================
-// 生成时间: {now}
-// 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}
-// ============================================================
-
-// ------------------ 当日数据处理部分 ------------------
-{today_script}
-
-// ------------------ 次日计划填报部分 ------------------
-{tomorrow_script}
-
-// ------------------ 主流程：顺序执行 ------------------
-(async () => {{
-    console.log("========== 开始执行当日数据处理 ==========");
-    await processToday();
-    console.log("========== 当日数据处理完成，开始执行次日计划填报 ==========");
-    await processTomorrow();
-    console.log("========== 所有任务执行完毕 ==========");
-}})();
-"""
-    return combined_script
-
 # ---------- Streamlit UI ----------
 uploaded_file = st.file_uploader("📂 上传 Excel 文件（包含当日数据和次日计划）", type=["xlsx", "xls"])
 
@@ -818,15 +739,13 @@ if uploaded_file is not None:
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        # 根据出发日期分离当日和次日数据
-        if "出发日期" in df.columns:
-            # 将出发日期转换为日期格式
-            df["出发日期"] = pd.to_datetime(df["出发日期"]).dt.date
-            df_today = df[(df["出发日期"] == today) & df["实际到达"].notna() & (df["实际到达"] != "")].copy()
-            df_tomorrow = df[df["出发日期"] > today].copy()
-        else:
-            st.error("Excel 中缺少“出发日期”列，请检查文件格式")
-            st.stop()
+        # 分离当日和次日数据：基于出发日期和实际到达
+        # 将出发日期列转换为日期对象
+        df["出发日期"] = pd.to_datetime(df["出发日期"]).dt.date
+        # 当日：出发日期 == today 且 实际到达有值
+        df_today = df[(df["出发日期"] == today) & (df["实际到达"].notna()) & (df["实际到达"] != "")].copy()
+        # 次日：出发日期 > today
+        df_tomorrow = df[df["出发日期"] > today].copy()
 
         st.info(f"✅ 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}")
 
@@ -847,43 +766,21 @@ if uploaded_file is not None:
             else:
                 st.write("无次日计划")
 
-        # 构建城市映射（可根据需要补充）
-        city_map = {
-            "杭州萧山": "浙江",
-            "厦门高崎": "福建",
-            "济南遥墙": "山东",
-            "新加坡实里达": "新加坡",
-            "深圳宝安": "广东",
-            "香港": "香港",
-            "玉林福绵": "广西",
-            "上海虹桥": "上海",
-            "北京首都": "北京",
-            "青岛胶东": "山东"
-        }
-        city_detail_map = {
-            "北京首都": {"province": "北京", "district": "顺义区"},
-            "北京大兴": {"province": "北京", "district": "大兴区"},
-            "天津滨海": {"province": "天津", "district": "滨海新区"},
-            "上海虹桥": {"province": "上海", "district": "闵行区"},
-            "上海浦东": {"province": "上海", "district": "浦东新区"},
-            "重庆江北": {"province": "重庆", "district": "江北区"},
-            "杭州萧山": {"province": "浙江", "district": "杭州"},
-            "厦门高崎": {"province": "福建", "district": "厦门"},
-            "济南遥墙": {"province": "山东", "district": "济南"},
-            "深圳宝安": {"province": "广东", "district": "深圳"},
-            "玉林福绵": {"province": "广西", "district": "玉林"},
-            "青岛胶东": {"province": "山东", "district": "青岛"}
-        }
-        domestic_keywords = [
-            '北京', '上海', '广州', '深圳', '成都', '西安', '三亚', '重庆', '天津',
-            '杭州', '南京', '武汉', '长沙', '郑州', '青岛', '大连', '厦门', '福州',
-            '昆明', '贵阳', '南宁', '海口', '兰州', '西宁', '银川', '乌鲁木齐',
-            '拉萨', '呼和浩特', '哈尔滨', '长春', '沈阳', '石家庄', '太原', '济南',
-            '合肥', '南昌', '四川', '贵州', '浙江', '山东', '广东'
-        ]
+        # 构建城市映射（基于次日计划，因为当日只匹配不需要映射）
+        city_map, city_detail_map = build_city_mappings(df_tomorrow)
+        city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
+        city_detail_map_json = json.dumps(city_detail_map, ensure_ascii=False, indent=4)
+        domestic_keywords_json = json.dumps(DOMESTIC_KEYWORDS, ensure_ascii=False)
+
+        with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
+            step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=400, key="step1")
+        step2_template = STEP2_SCRIPT_TEMPLATE
 
         with st.spinner("正在生成脚本..."):
-            final_script = generate_js_script(df_today, df_tomorrow, city_map, city_detail_map, domestic_keywords)
+            final_script = generate_js_script(
+                df_today, df_tomorrow, step1_template, step2_template,
+                city_map_json, city_detail_map_json, domestic_keywords_json
+            )
 
         st.subheader("📜 生成的合并 JavaScript 脚本")
         st.code(final_script, language="javascript")
