@@ -185,25 +185,215 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（用户可编辑） ----------
+# ---------- 当日数据处理脚本模板（实际匹配并填写数据） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
-// 请根据您的实际需求修改此脚本。要求包含一个 async function processToday()，
-// 并使用 __EXCEL_DATA__ 作为从 Excel 提取的数据数组。
-async function processToday() {
-    const excelData = __EXCEL_DATA__;
-    console.log(`📅 开始处理当日 ${excelData.length} 条记录...`);
-    // 在此处添加您的实际处理逻辑
-    // 示例：循环打印数据
-    for (let i = 0; i < excelData.length; i++) {
-        const record = excelData[i];
-        console.log(`处理记录: ${record.飞机注册号} ${record.出发城市} -> ${record.到达城市}`);
+// 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
+// 请根据实际页面结构调整以下选择器：
+//   ROW_SELECTOR: 表格行选择器（例如 'table tbody:nth-of-type(2) tr'）
+//   REG_SELECTOR: 飞机注册号所在列的选择器（例如 'td:nth-child(6) div'）
+//   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器（例如 'td:nth-child(7) div'）
+//   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 'button:contains("编辑")' 或 'a:contains("编辑")'）
+//   表单内字段选择器（见 fillActualArrival 函数）
+
+// 配置区
+const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';    // 表格行选择器
+const REG_SELECTOR = 'td:nth-child(6) div';              // 飞机注册号所在列
+const SEGMENT_SELECTOR = 'td:nth-child(7) div';          // 航段信息列（出发城市->到达城市）
+const EDIT_BUTTON_SELECTOR = 'button:contains("编辑")';  // 编辑按钮选择器
+
+// 从 Excel 提取的数据（包含实际到达时间）
+const excelData = __EXCEL_DATA__;
+
+// ================= 辅助函数 =================
+async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function getCurrentDoc() {
+    // 尝试多种 iframe 选择器
+    const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
+    let iframe = null;
+    for (let sel of iframeSelectors) {
+        iframe = document.querySelector(sel);
+        if (iframe) break;
     }
-    console.log("🎉 当日数据处理完成！");
+    if (!iframe) {
+        console.warn('未找到 iframe，可能是页面未加载完成，稍后重试');
+        return null;
+    }
+    let doc = iframe.contentDocument;
+    while (!doc || !doc.querySelector('body')) {
+        await sleep(200);
+        doc = iframe.contentDocument;
+    }
+    return doc;
+}
+
+async function waitForElement(selector, timeout = 15000, isXPath = false) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const doc = await getCurrentDoc();
+        if (!doc) {
+            await sleep(500);
+            continue;
+        }
+        let el;
+        if (isXPath) {
+            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        } else {
+            el = doc.querySelector(selector);
+        }
+        if (el) return el;
+        await sleep(500);
+    }
+    console.warn(`等待元素超时: ${selector}`);
+    return null;
+}
+
+async function clickEditButton(row) {
+    // 尝试多种可能的编辑按钮选择器
+    const editSelectors = [
+        'button:contains("编辑")',
+        'a:contains("编辑")',
+        '.edit-btn',
+        '[title="编辑"]',
+        'button.edit',
+        'a.edit'
+    ];
+    let editBtn = null;
+    for (let sel of editSelectors) {
+        if (sel.includes(':contains')) {
+            // 模拟 :contains 选择器
+            const elements = row.querySelectorAll('button, a');
+            for (let el of elements) {
+                if (el.innerText && el.innerText.includes('编辑')) {
+                    editBtn = el;
+                    break;
+                }
+            }
+            if (editBtn) break;
+        } else {
+            editBtn = row.querySelector(sel);
+            if (editBtn) break;
+        }
+    }
+    if (!editBtn) {
+        console.warn('未找到编辑按钮');
+        return false;
+    }
+    editBtn.click();
+    await sleep(1000);
+    return true;
+}
+
+async function fillActualArrival(record) {
+    const doc = await getCurrentDoc();
+    if (!doc) return false;
+    // 实际到达输入框（请根据实际页面调整）
+    const actualArrivalInput = doc.querySelector('#actualArrival') || 
+                               doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (actualArrivalInput) {
+        actualArrivalInput.value = record.实际到达;
+        actualArrivalInput.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log(`已填入实际到达时间: ${record.实际到达}`);
+    } else {
+        console.warn('未找到实际到达输入框，跳过该字段');
+    }
+    // 实际出发输入框（可选）
+    const actualDepartureInput = doc.querySelector('#actualDeparture') ||
+                                 doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (actualDepartureInput && record.实际出发) {
+        actualDepartureInput.value = record.实际出发;
+        actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    // 实际飞行时间输入框（可选）
+    const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
+                                  doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (actualFlightTimeInput && record.实际飞行时间) {
+        actualFlightTimeInput.value = record.实际飞行时间;
+        actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    // 提交保存按钮（请根据实际页面调整）
+    const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
+                      doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (submitBtn) {
+        submitBtn.click();
+        console.log('已提交保存');
+        await sleep(2000);
+        // 等待返回列表页
+        await waitForElement('input.query.yuanjiao', 15000);
+        return true;
+    }
+    console.warn('未找到保存按钮');
+    return false;
+}
+
+async function processOnePlan(row, matchedExcel) {
+    console.log(`处理匹配计划: ${matchedExcel.飞机注册号} ${matchedExcel.出发城市} -> ${matchedExcel.到达城市}`);
+    if (!await clickEditButton(row)) {
+        console.error('无法点击编辑按钮，跳过');
+        return false;
+    }
+    const success = await fillActualArrival(matchedExcel);
+    if (!success) {
+        console.error('填写失败');
+    }
+    return success;
+}
+
+async function findAllMatches() {
+    const doc = await getCurrentDoc();
+    if (!doc) {
+        console.warn('无法获取文档，跳过当日数据处理');
+        return [];
+    }
+    const rows = doc.querySelectorAll(ROW_SELECTOR);
+    const matches = [];
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const regCell = row.querySelector(REG_SELECTOR);
+        const segmentCell = row.querySelector(SEGMENT_SELECTOR);
+        if (!regCell || !segmentCell) continue;
+        const reg = regCell.innerText.trim();
+        const segment = segmentCell.innerText.trim();
+        for (const record of excelData) {
+            const excelReg = record.飞机注册号;
+            const excelSegment = `${record.出发城市} -> ${record.到达城市}`;
+            if (reg === excelReg && segment === excelSegment) {
+                matches.push({ row, matchedExcel: record });
+                break;
+            }
+        }
+    }
+    console.log(`找到 ${matches.length} 个匹配计划`);
+    return matches;
+}
+
+async function processToday() {
+    console.log('🚀 开始执行当日数据处理流程...');
+    const matches = await findAllMatches();
+    if (matches.length === 0) {
+        console.warn('⚠️ 没有找到任何匹配的计划，跳过当日数据处理');
+        return;
+    }
+    for (let i = 0; i < matches.length; i++) {
+        const { row, matchedExcel } = matches[i];
+        console.log(`\\n========== 处理第 ${i+1}/${matches.length} 个匹配计划 ==========`);
+        try {
+            const success = await processOnePlan(row, matchedExcel);
+            if (!success) {
+                console.error(`⚠️ 第 ${i+1} 个计划处理失败，跳过继续下一个...`);
+            } else {
+                console.log(`✅ 第 ${i+1} 个计划处理完成并已返回列表页。`);
+            }
+        } catch (err) {
+            console.error(`处理第 ${i+1} 个计划时发生异常:`, err);
+        }
+    }
+    console.log('🎉 当日数据处理完成！');
 }
 """
 
-# ---------- 次日计划填报脚本模板（已修复境内判断） ----------
+# ---------- 次日计划填报脚本模板（完整内嵌，已修复境内判断） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
