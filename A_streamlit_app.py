@@ -291,32 +291,31 @@ async function ensureListPage() {
 
 // ================= 城市到地区/国家的映射 ====================
 const CITY_MAP = {
-    "菲律宾马尼拉": "菲律宾",
-    "马来西亚吉隆坡": "马来西亚",
-    "日本东京": "日本",
-    "北京首都": "北京",
-    "三亚凤凰": "海南",
-    "上海": "上海",
-    "成都双流": "四川",
-    "香港": "香港",
-    "哈萨克斯坦阿拉木图": "哈萨克斯坦",
-    "贵阳龙洞堡": "贵州",
     "杭州萧山": "浙江",
-    "日照山字河": "山东"
+    "厦门高崎": "福建",
+    "济南遥墙": "山东",
+    "新加坡实里达": "新加坡",
+    "深圳宝安": "广东",
+    "香港": "香港",
+    "玉林福绵": "广西",
+    "上海虹桥": "上海",
+    "北京首都": "北京",
+    "青岛胶东": "山东"
 };
 
 const CITY_DETAIL_MAP = {
-    "三亚凤凰": { province: "海南", district: "三亚" },
     "北京首都": { province: "北京", district: "顺义区" },
     "北京大兴": { province: "北京", district: "大兴区" },
     "天津滨海": { province: "天津", district: "滨海新区" },
     "上海虹桥": { province: "上海", district: "闵行区" },
     "上海浦东": { province: "上海", district: "浦东新区" },
     "重庆江北": { province: "重庆", district: "江北区" },
-    "成都双流": { province: "四川", district: "成都" },
-    "贵阳龙洞堡": { province: "贵州", district: "贵阳" },
     "杭州萧山": { province: "浙江", district: "杭州" },
-    "日照山字河": { province: "山东", district: "日照" }
+    "厦门高崎": { province: "福建", district: "厦门" },
+    "济南遥墙": { province: "山东", district: "济南" },
+    "深圳宝安": { province: "广东", district: "深圳" },
+    "玉林福绵": { province: "广西", district: "玉林" },
+    "青岛胶东": { province: "山东", district: "青岛" }
 };
 
 const DOMESTIC_KEYWORDS = [
@@ -854,10 +853,9 @@ if uploaded_file is not None:
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        # 分离当日和次日数据：加强判断，确保实际到达列的值真正非空
+        # 分离当日和次日数据：严格判断实际到达列
         if "实际到达" in df.columns:
             # 将实际到达列转换为字符串，并判断是否为有效值（非空且不等于 'nan' 且不为空字符串）
-            # 注意：pandas 中的 NaN 在转换为字符串后是 'nan'，所以需要先判断 notna()
             df_today = df[df["实际到达"].notna() & (df["实际到达"] != "") & (df["实际到达"].astype(str).str.strip() != "")].copy()
             df_tomorrow = df[df["实际到达"].isna() | (df["实际到达"] == "") | (df["实际到达"].astype(str).str.strip() == "")].copy()
         else:
