@@ -185,7 +185,7 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（增强版，包含更健壮的 iframe 查找） ----------
+# ---------- 当日数据处理脚本模板（增强版，包含注册号标准化和航段解析） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
@@ -208,9 +208,28 @@ const excelData = __EXCEL_DATA__;
 // ================= 辅助函数 =================
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-// 获取当前文档（优先尝试 iframe，若无则返回顶层文档）
+// 标准化注册号（去除短横线）
+function normalizeReg(reg) {
+    return reg.replace(/-/g, '');
+}
+
+// 解析航段信息，提取城市名（例如从 "境内-广东-深圳,境内-浙江-杭州" 中提取 "深圳" 和 "杭州"）
+function parseSegment(segmentText) {
+    // 匹配类似 "境内-广东-深圳" 的格式，提取最后一个部分
+    const parts = segmentText.split(',');
+    if (parts.length < 2) return null;
+    const depPart = parts[0];
+    const arrPart = parts[1];
+    const depMatch = depPart.match(/-([^\\s-]+)$/);
+    const arrMatch = arrPart.match(/-([^\\s-]+)$/);
+    if (depMatch && arrMatch) {
+        return { dep: depMatch[1], arr: arrMatch[1] };
+    }
+    return null;
+}
+
+// 获取当前文档（优先尝试 iframe，若无则使用顶层文档）
 async function getCurrentDoc() {
-    // 尝试多种 iframe 选择器
     const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
     let iframe = null;
     for (let sel of iframeSelectors) {
@@ -225,7 +244,6 @@ async function getCurrentDoc() {
         }
         return doc;
     } else {
-        // 如果没有 iframe，则直接使用顶层文档（适用于某些页面）
         console.warn('未找到 iframe，将使用顶层文档');
         return document;
     }
@@ -249,7 +267,6 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
 }
 
 async function clickEditButton(row) {
-    // 尝试多种可能的编辑按钮选择器
     const editSelectors = [
         'button:contains("编辑")',
         'a:contains("编辑")',
@@ -261,7 +278,6 @@ async function clickEditButton(row) {
     let editBtn = null;
     for (let sel of editSelectors) {
         if (sel.includes(':contains')) {
-            // 模拟 :contains 选择器
             const elements = row.querySelectorAll('button, a');
             for (let el of elements) {
                 if (el.innerText && el.innerText.includes('编辑')) {
@@ -286,7 +302,6 @@ async function clickEditButton(row) {
 
 async function fillActualArrival(record) {
     const doc = await getCurrentDoc();
-    // 实际到达输入框（请根据实际页面调整）
     const actualArrivalInput = doc.querySelector('#actualArrival') || 
                                doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualArrivalInput) {
@@ -296,28 +311,24 @@ async function fillActualArrival(record) {
     } else {
         console.warn('未找到实际到达输入框，跳过该字段');
     }
-    // 实际出发输入框（可选）
     const actualDepartureInput = doc.querySelector('#actualDeparture') ||
                                  doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualDepartureInput && record.实际出发) {
         actualDepartureInput.value = record.实际出发;
         actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 实际飞行时间输入框（可选）
     const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
                                   doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (actualFlightTimeInput && record.实际飞行时间) {
         actualFlightTimeInput.value = record.实际飞行时间;
         actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    // 提交保存按钮（请根据实际页面调整）
     const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
                       doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (submitBtn) {
         submitBtn.click();
         console.log('已提交保存');
         await sleep(2000);
-        // 等待返回列表页
         await waitForElement('input.query.yuanjiao', 15000);
         return true;
     }
@@ -349,11 +360,16 @@ async function findAllMatches() {
         if (!regCell || !segmentCell) continue;
         const reg = regCell.innerText.trim();
         const segment = segmentCell.innerText.trim();
+        const normalizedReg = normalizeReg(reg);
+        const parsed = parseSegment(segment);
+        console.log(`行 ${i+1}: 注册号=${reg} (标准化=${normalizedReg}), 航段=${segment}, 解析后出发=${parsed?.dep}, 到达=${parsed?.arr}`);
         for (const record of excelData) {
-            const excelReg = record.飞机注册号;
-            const excelSegment = `${record.出发城市} -> ${record.到达城市}`;
-            if (reg === excelReg && segment === excelSegment) {
+            const excelReg = normalizeReg(record.飞机注册号);
+            const excelDep = record.出发城市.split(' ')[0]; // 取第一个词，如“深圳宝安” -> “深圳”
+            const excelArr = record.到达城市.split(' ')[0];
+            if (normalizedReg === excelReg && parsed && parsed.dep === excelDep && parsed.arr === excelArr) {
                 matches.push({ row, matchedExcel: record });
+                console.log(`匹配成功！`);
                 break;
             }
         }
@@ -582,7 +598,6 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
-    // 境内
     const detail = CITY_DETAIL_MAP[city];
     if (!detail) {
         console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
@@ -934,11 +949,8 @@ if uploaded_file is not None:
         st.dataframe(df.head())
 
         # 分离当日和次日数据：基于出发日期和实际到达
-        # 将出发日期列转换为日期对象
         df["出发日期"] = pd.to_datetime(df["出发日期"]).dt.date
-        # 当日：出发日期 == today 且 实际到达有值
         df_today = df[(df["出发日期"] == today) & (df["实际到达"].notna()) & (df["实际到达"] != "")].copy()
-        # 次日：出发日期 > today
         df_tomorrow = df[df["出发日期"] > today].copy()
 
         st.info(f"✅ 当日记录数: {len(df_today)}，次日计划数: {len(df_tomorrow)}")
@@ -960,7 +972,7 @@ if uploaded_file is not None:
             else:
                 st.write("无次日计划")
 
-        # 构建城市映射（基于次日计划，因为当日只匹配不需要映射）
+        # 构建城市映射（基于次日计划）
         city_map, city_detail_map = build_city_mappings(df_tomorrow)
         city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
         city_detail_map_json = json.dumps(city_detail_map, ensure_ascii=False, indent=4)
