@@ -203,7 +203,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本模板（完整内嵌，已修复正则和境内判断） ----------
+# ---------- 次日计划填报脚本模板（已修复境内判断） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -300,20 +300,29 @@ const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
 const DOMESTIC_KEYWORDS = __DOMESTIC_KEYWORDS__;
 
 function getLocationInfo(city) {
+    // 优先检查详细映射（境内城市）
+    const detail = CITY_DETAIL_MAP[city];
+    if (detail) {
+        return { zone: "境内", region: detail.province, needThirdSelect: true, district: detail.district };
+    }
+    // 其次检查普通映射
+    const mapped = CITY_MAP[city];
+    if (mapped) {
+        // 如果映射的值在境内关键词中，则视为境内
+        const isDomestic = DOMESTIC_KEYWORDS.includes(mapped);
+        if (isDomestic) {
+            return { zone: "境内", region: mapped, needThirdSelect: true };
+        } else {
+            return { zone: "境外", region: mapped, needThirdSelect: false };
+        }
+    }
+    // 最后使用关键词判断
     const isDomestic = DOMESTIC_KEYWORDS.some(keyword => city.includes(keyword));
     if (isDomestic) {
-        let region = CITY_MAP[city];
-        if (!region) {
-            const match = city.match(new RegExp('^([^\\\\s\\\\-]+)'));
-            region = match ? match[1] : city;
-        }
+        let region = city.split(/[\\s\\-]/)[0];
         return { zone: "境内", region: region, needThirdSelect: true };
     } else {
-        let country = CITY_MAP[city];
-        if (!country) {
-            const parts = city.split(new RegExp('[\\\\s\\\\-]'));
-            country = parts[0];
-        }
+        let country = city.split(/[\\s\\-]/)[0];
         return { zone: "境外", region: country, needThirdSelect: false };
     }
 }
@@ -389,6 +398,7 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
+    // 境内
     const detail = CITY_DETAIL_MAP[city];
     if (!detail) {
         console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
