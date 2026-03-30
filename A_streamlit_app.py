@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="飞行计划脚本生成器", layout="wide")
 st.title("✈️ 飞行计划自动化脚本生成器")
-st.markdown("上传每日导出的 Excel 文件，自动生成浏览器控制台脚本，用于批量填写飞行计划表单。")
+st.markdown("上传每日导出的 Excel 文件，自动生成浏览器控制台脚本，用于批量填写飞行计划表单并备案次日计划。")
 
 uploaded_file = st.file_uploader("选择 Excel 文件（.xlsx）", type=["xlsx"])
 
@@ -34,49 +34,39 @@ if uploaded_file is not None:
                     rec[k] = ""
         js_data = json.dumps(records, ensure_ascii=False, indent=4)
 
-        # 生成脚本（进入 iframe）
+        # 计算明天的日期字符串（YYYY-MM-DD）
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
         script = f"""
 // ================= 自动生成的飞行计划脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 待处理计划数: {len(df_valid)}
+// 次日日期: {tomorrow}
 // =========================================================
 
 // ================= 配置区 =================
-// 目标 iframe ID
 const IFRAME_ID = 'main';
-// 在 iframe 内定位行：第二个 tbody 的 tr
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
-// 相对于行的列选择器
 const REG_SELECTOR = 'td:nth-child(6) div';
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
 const DATE_SELECTOR = 'td:nth-child(9)';
+const NEXT_DAY_DATE = '{tomorrow}';   // 次日日期
 
 // 从 Excel 提取的数据
 const excelData = {js_data};
 
-// ================= 辅助函数 =================
+// ================= 辅助函数（保持不变） =================
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
+function normalizeReg(reg) {{ return reg.replace(/[-\s]/g, '').trim(); }}
 
-function normalizeReg(reg) {{
-    return reg.replace(/[-\s]/g, '').trim();
-}}
-
-// 获取 iframe 文档，确保加载完成
 async function getMainDoc() {{
     const iframe = document.querySelector('#' + IFRAME_ID);
-    if (!iframe) {{
-        console.error('未找到 iframe #' + IFRAME_ID);
-        return null;
-    }}
+    if (!iframe) {{ console.error('未找到 iframe #' + IFRAME_ID); return null; }}
     let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {{
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }}
+    while (!doc || !doc.querySelector('body')) {{ await sleep(200); doc = iframe.contentDocument; }}
     return doc;
 }}
 
-// 等待表格出现（在 iframe 内）
 async function waitForTable() {{
     const start = Date.now();
     while (Date.now() - start < 10000) {{
@@ -89,7 +79,12 @@ async function waitForTable() {{
     return null;
 }}
 
-// 获取第一个匹配的计划
+// 获取所有行（包括后续动态加载的）
+function getAllRows(doc) {{
+    return doc.querySelectorAll(ROW_SELECTOR);
+}}
+
+// 获取第一个匹配的计划（有实际到达时间的）
 async function getFirstMatch() {{
     const rows = await waitForTable();
     if (!rows) return null;
@@ -139,6 +134,53 @@ async function getFirstMatch() {{
     }}
     console.log('❌ 没有找到任何匹配的计划');
     return null;
+}}
+
+// 获取次日计划的行（服务开始时间为明天）
+async function getNextDayPlans() {{
+    const rows = await waitForTable();
+    if (!rows) return [];
+    const nextDayRows = [];
+    for (let i = 0; i < rows.length; i++) {{
+        const row = rows[i];
+        const dateCell = row.querySelector(DATE_SELECTOR);
+        const webDate = dateCell ? dateCell.innerText.trim() : '';
+        if (webDate === NEXT_DAY_DATE) {{
+            nextDayRows.push(row);
+        }}
+    }}
+    return nextDayRows;
+}}
+
+// 备案单个次日计划
+async function processNextDayPlan(row) {{
+    // 假设备案按钮在操作列（通常为最后一列），查找包含“备案”文本的按钮或链接
+    const actionCell = row.querySelector('td:last-child');
+    if (!actionCell) {{
+        console.warn('未找到操作列，无法备案');
+        return false;
+    }}
+    // 查找包含“备案”文本的按钮或链接
+    const buttons = actionCell.querySelectorAll('button, a, [role="button"]');
+    let recordBtn = null;
+    for (let btn of buttons) {{
+        if (btn.innerText.trim().includes('备案')) {{
+            recordBtn = btn;
+            break;
+        }}
+    }}
+    if (!recordBtn) {{
+        console.warn('未找到“备案”按钮，跳过该行');
+        return false;
+    }}
+    console.log('🔘 点击“备案”按钮...');
+    recordBtn.click();
+    await sleep(1500); // 等待备案操作完成（可能弹出对话框）
+    // 如果备案后有弹窗确认，可以在这里添加自动点击确认的逻辑
+    // 例如，查找包含“确定”的按钮并点击
+    // 但为了通用性，先不自动处理，等待用户手动确认
+    console.log('✅ 已点击备案按钮，请手动处理后续弹窗（如有）。');
+    return true;
 }}
 
 // 等待元素（XPath）出现，在 iframe 内查找
@@ -215,7 +257,7 @@ function getLocationInfo(city) {{
     }}
 }}
 
-// 处理起飞/降落区块
+// 处理起飞/降落区块（与原脚本相同）
 async function handleAirportBlock(blockIndex, city, label) {{
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
@@ -318,16 +360,15 @@ async function waitForReturnToList(timeout = 300000) {{
     return false;
 }}
 
-// 处理单个计划
+// 处理单个有实际到达时间的计划（填报表单）
 async function processOnePlan(planRow, matchedExcel) {{
     console.log(`\\n🔧 开始处理计划：机号 ${{matchedExcel["飞机注册号"]}}`);
     const execBtn = planRow.querySelector('.icon-qidong, [class*="icon-qidong"]');
     if (!execBtn) {{ console.error('❌ 未找到“执行”按钮，跳过'); return false; }}
     console.log('🔘 点击“执行”按钮...');
     execBtn.click();
-    await sleep(2000);  // 等待表单出现
+    await sleep(2000);
 
-    // 等待日期输入框
     const startDateXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input';
     const endDateXPath   = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input';
     console.log('⏳ 等待日期输入框...');
@@ -344,13 +385,11 @@ async function processOnePlan(planRow, matchedExcel) {{
     setDateInput(startInput, startDate);
     setDateInput(endInput, endDate);
 
-    // 起飞、降落区块
     const depCity = matchedExcel["出发城市"];
     if (!(await handleAirportBlock(1, depCity, "起飞"))) return false;
     const arrCity = matchedExcel["到达城市"];
     if (!(await handleAirportBlock(2, arrCity, "降落"))) return false;
 
-    // 第一个飞行时间（实际飞行时间）
     const actualFlightTime = matchedExcel["实际飞行时间"];
     if (actualFlightTime && actualFlightTime.includes(':')) {{
         const flightHourXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[11]/div[1]/div[2]/div/div[5]/div/input[1]';
@@ -368,9 +407,7 @@ async function processOnePlan(planRow, matchedExcel) {{
         }} else console.warn('⚠️ 未找到第一个飞行时间输入框');
     }} else console.warn(`⚠️ 实际飞行时间 "${{actualFlightTime}}" 格式不正确`);
 
-    // 第二个飞行时间
     await handleSecondFlightTime();
-    // 详细作业区
     await handleDetailArea(depCity, arrCity);
 
     console.log('✅ 所有字段填写完成，请手动点击“提交”按钮。');
@@ -385,19 +422,17 @@ async function processOnePlan(planRow, matchedExcel) {{
 // ================= 主流程 =================
 (async () => {{
     console.log('🚀 开始执行自动化流程...');
+
+    // 阶段一：处理有实际到达时间的计划（填报表单）
     let processedCount = 0;
     while (true) {{
         const match = await getFirstMatch();
-        if (!match) {{
-            console.log('🎉 没有更多匹配的计划，流程结束。');
-            break;
-        }}
+        if (!match) break;
         processedCount++;
-        console.log(`\\n========== 处理第 ${{processedCount}} 个匹配计划 ==========`);
+        console.log(`\\n========== 处理第 ${{processedCount}} 个匹配计划（填报） ==========`);
         const success = await processOnePlan(match.row, match.matchedExcel);
         if (!success) {{
             console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
-            // 尝试强制返回列表页（点击“返回”按钮）
             const backBtnXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input';
             const backBtn = await waitForElement(backBtnXPath, 3000);
             if (backBtn) backBtn.click();
@@ -407,13 +442,29 @@ async function processOnePlan(planRow, matchedExcel) {{
         }}
         await sleep(1000);
     }}
-    console.log('\\n🎉 所有匹配计划处理完毕！');
+    console.log(`🎉 已完成所有填报计划，共 ${{processedCount}} 条。`);
+
+    // 阶段二：处理次日计划（备案）
+    console.log('\\n🚀 开始处理次日计划（备案）...');
+    const nextDayRows = await getNextDayPlans();
+    console.log(`📋 找到 ${{nextDayRows.length}} 条次日计划（服务开始时间为 {NEXT_DAY_DATE}）`);
+    let recordCount = 0;
+    for (let i = 0; i < nextDayRows.length; i++) {{
+        const row = nextDayRows[i];
+        console.log(`\\n========== 处理第 ${{i+1}} 条次日计划 ==========`);
+        const success = await processNextDayPlan(row);
+        if (success) recordCount++;
+        await sleep(1000); // 避免操作过快
+    }}
+    console.log(`✅ 次日计划处理完成，成功备案 ${{recordCount}} 条。`);
+
+    console.log('\\n🎉 所有任务执行完毕！');
 }})();
 """
 
         st.subheader("📜 生成的 JavaScript 脚本")
         st.code(script, language="javascript")
-        st.info("复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。")
+        st.info("复制以上代码，在目标网页（飞行计划列表页）按 F12 打开控制台，粘贴并回车执行。脚本将先处理已执飞计划（填报表单），然后自动备案次日计划。")
         st.download_button(
             label="💾 下载脚本文件 (.js)",
             data=script,
