@@ -186,7 +186,7 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（最终修正版） ----------
+# ---------- 当日数据处理脚本模板（已修正：使用列索引定位编辑按钮） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 配置区
@@ -194,7 +194,7 @@ const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
 const REG_SELECTOR = 'td:nth-child(6) div';
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
 const DATE_SELECTOR = 'td:nth-child(9)';                 // 服务开始日期所在列
-const EDIT_BUTTON_SELECTOR = 'a[data-original-title="编辑"]'; // 编辑按钮选择器
+const EDIT_BUTTON_COL_INDEX = 13;                        // 操作按钮所在列（第13列）
 
 // 从 Excel 提取的数据（包含实际到达时间）
 const excelData = __EXCEL_DATA__;
@@ -257,20 +257,20 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
 }
 
 async function clickEditButton(row) {
-    let editBtn = row.querySelector(EDIT_BUTTON_SELECTOR);
-    if (!editBtn) {
-        const allLinks = row.querySelectorAll('a');
-        if (allLinks.length > 0) {
-            editBtn = allLinks[allLinks.length - 1];
-            console.warn('使用默认行末链接作为编辑按钮');
-        }
-    }
-    if (!editBtn) {
-        console.warn('未找到编辑按钮，请检查选择器');
+    // 通过列索引定位操作按钮所在的单元格
+    const cell = row.querySelector(`td:nth-child(${EDIT_BUTTON_COL_INDEX})`);
+    if (!cell) {
+        console.warn(`未找到第 ${EDIT_BUTTON_COL_INDEX} 列单元格`);
         return false;
     }
-    editBtn.click();
-    console.log('已点击编辑按钮');
+    // 点击该单元格内的第一个按钮（通常是“执行”按钮）
+    const btn = cell.querySelector('a, button');
+    if (!btn) {
+        console.warn('未找到可点击按钮');
+        return false;
+    }
+    btn.click();
+    console.log('已点击执行按钮');
     await sleep(1000);
     return true;
 }
@@ -314,7 +314,7 @@ async function fillActualArrival(record) {
 async function processOnePlan(row, matchedExcel) {
     console.log(`处理匹配计划: ${matchedExcel.飞机注册号} ${matchedExcel.出发城市} -> ${matchedExcel.到达城市}`);
     if (!await clickEditButton(row)) {
-        console.error('无法点击编辑按钮，跳过');
+        console.error('无法点击执行按钮，跳过');
         return false;
     }
     const success = await fillActualArrival(matchedExcel);
@@ -395,7 +395,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本模板（完整版，保持不变） ----------
+# ---------- 次日计划填报脚本模板（保持不变，已集成境内判断） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
