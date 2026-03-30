@@ -185,7 +185,7 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（增强版，包含注册号标准化和航段解析） ----------
+# ---------- 当日数据处理脚本模板（增强版，包含详细匹配日志） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
@@ -353,24 +353,31 @@ async function findAllMatches() {
     const doc = await getCurrentDoc();
     const rows = doc.querySelectorAll(ROW_SELECTOR);
     const matches = [];
+    console.log(`开始扫描列表，共 ${rows.length} 行`);
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const regCell = row.querySelector(REG_SELECTOR);
         const segmentCell = row.querySelector(SEGMENT_SELECTOR);
-        if (!regCell || !segmentCell) continue;
+        if (!regCell || !segmentCell) {
+            console.log(`行 ${i+1}: 缺少注册号或航段单元格，跳过`);
+            continue;
+        }
         const reg = regCell.innerText.trim();
         const segment = segmentCell.innerText.trim();
         const normalizedReg = normalizeReg(reg);
         const parsed = parseSegment(segment);
-        console.log(`行 ${i+1}: 注册号=${reg} (标准化=${normalizedReg}), 航段=${segment}, 解析后出发=${parsed?.dep}, 到达=${parsed?.arr}`);
+        console.log(`行 ${i+1}: 注册号="${reg}" (标准化="${normalizedReg}"), 航段="${segment}", 解析后出发="${parsed?.dep}", 到达="${parsed?.arr}"`);
         for (const record of excelData) {
             const excelReg = normalizeReg(record.飞机注册号);
-            const excelDep = record.出发城市.split(' ')[0]; // 取第一个词，如“深圳宝安” -> “深圳”
+            const excelDep = record.出发城市.split(' ')[0];
             const excelArr = record.到达城市.split(' ')[0];
+            console.log(`  与 Excel 比较: 注册号="${excelReg}", 出发="${excelDep}", 到达="${excelArr}"`);
             if (normalizedReg === excelReg && parsed && parsed.dep === excelDep && parsed.arr === excelArr) {
+                console.log(`  ✅ 匹配成功！`);
                 matches.push({ row, matchedExcel: record });
-                console.log(`匹配成功！`);
                 break;
+            } else {
+                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${parsed && parsed.dep === excelDep}, 到达匹配=${parsed && parsed.arr === excelArr}`);
             }
         }
     }
@@ -598,6 +605,7 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
+    // 境内
     const detail = CITY_DETAIL_MAP[city];
     if (!detail) {
         console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
