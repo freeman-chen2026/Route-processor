@@ -75,7 +75,6 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def build_city_mappings(df):
-    """根据数据动态扩展映射，但保留基础映射"""
     cities = set()
     for _, row in df.iterrows():
         dep = str(row["出发城市"]).strip()
@@ -89,18 +88,14 @@ def build_city_mappings(df):
     for city in cities:
         if city in city_map:
             continue
-        # 境内判断：如果城市名包含省份或主要城市关键词，则视为境内
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
-            # 尝试提取省份（取第一个词）
             province = city.split()[0] if city.split() else city
             city_map[city] = province
             city_detail_map[city] = {"province": province, "district": ""}
         else:
-            # 境外：取第一个词作为国家名
             country = city.split()[0] if city.split() else city
             city_map[city] = country
-            # 境外不需要 detail_map
     return city_map, city_detail_map
 
 def generate_flight_records(df):
@@ -186,24 +181,15 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（增强版，包含修正的日期选择器和部分匹配） ----------
+# ---------- 当日数据处理脚本模板（最终版，编辑按钮已预设） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
-// 用于在列表中查找匹配的飞行记录，并填写实际到达时间等信息。
-// 请根据实际页面结构调整以下选择器：
-//   ROW_SELECTOR: 表格行选择器（例如 'table tbody:nth-of-type(2) tr'）
-//   REG_SELECTOR: 飞机注册号所在列的选择器（例如 'td:nth-child(6) div'）
-//   SEGMENT_SELECTOR: 航段信息（出发城市->到达城市）所在列的选择器（例如 'td:nth-child(7) div'）
-//   DATE_SELECTOR: 服务开始日期所在列的选择器（例如 'td:nth-child(9)'）
-//   EDIT_BUTTON_SELECTOR: 编辑按钮的选择器（如 'button:contains("编辑")' 或 'a:contains("编辑")'）
-//   表单内字段选择器（见 fillActualArrival 函数）
-
 // 配置区
-const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';    // 表格行选择器
-const REG_SELECTOR = 'td:nth-child(6) div';              // 飞机注册号所在列
-const SEGMENT_SELECTOR = 'td:nth-child(7) div';          // 航段信息列（出发城市->到达城市）
-const DATE_SELECTOR = 'td:nth-child(9)';                 // 服务开始日期所在列（请根据实际调整）
-const EDIT_BUTTON_SELECTOR = 'button:contains("编辑")';  // 编辑按钮选择器
+const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
+const REG_SELECTOR = 'td:nth-child(6) div';
+const SEGMENT_SELECTOR = 'td:nth-child(7) div';
+const DATE_SELECTOR = 'td:nth-child(9)';
+const EDIT_BUTTON_SELECTOR = 'a[data-original-title="编辑"]'; // 编辑按钮选择器
 
 // 从 Excel 提取的数据（包含实际到达时间）
 const excelData = __EXCEL_DATA__;
@@ -211,14 +197,11 @@ const excelData = __EXCEL_DATA__;
 // ================= 辅助函数 =================
 async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-// 标准化注册号（去除空格、短横线）
 function normalizeReg(reg) {
     return reg.replace(/[\\s-]/g, '');
 }
 
-// 解析航段信息，提取城市名（例如从 "境内-浙江-杭州,境内-山东-济南" 中提取 "杭州" 和 "济南"）
 function parseSegment(segmentText) {
-    // 匹配类似 "境内-广东-深圳" 的格式，提取最后一个部分
     const parts = segmentText.split(',');
     if (parts.length < 2) return null;
     const depPart = parts[0];
@@ -231,7 +214,6 @@ function parseSegment(segmentText) {
     return null;
 }
 
-// 获取当前文档（优先尝试 iframe，若无则使用顶层文档）
 async function getCurrentDoc() {
     const iframeSelectors = ['#main', 'iframe[id="main"]', 'iframe[name="main"]', 'iframe'];
     let iframe = null;
@@ -270,35 +252,21 @@ async function waitForElement(selector, timeout = 15000, isXPath = false) {
 }
 
 async function clickEditButton(row) {
-    const editSelectors = [
-        'button:contains("编辑")',
-        'a:contains("编辑")',
-        '.edit-btn',
-        '[title="编辑"]',
-        'button.edit',
-        'a.edit'
-    ];
-    let editBtn = null;
-    for (let sel of editSelectors) {
-        if (sel.includes(':contains')) {
-            const elements = row.querySelectorAll('button, a');
-            for (let el of elements) {
-                if (el.innerText && el.innerText.includes('编辑')) {
-                    editBtn = el;
-                    break;
-                }
-            }
-            if (editBtn) break;
-        } else {
-            editBtn = row.querySelector(sel);
-            if (editBtn) break;
+    let editBtn = row.querySelector(EDIT_BUTTON_SELECTOR);
+    if (!editBtn) {
+        // 备选：查找所有 a，取最后一个
+        const allLinks = row.querySelectorAll('a');
+        if (allLinks.length > 0) {
+            editBtn = allLinks[allLinks.length - 1];
+            console.warn('使用默认行末链接作为编辑按钮');
         }
     }
     if (!editBtn) {
-        console.warn('未找到编辑按钮');
+        console.warn('未找到编辑按钮，请检查选择器');
         return false;
     }
     editBtn.click();
+    console.log('已点击编辑按钮');
     await sleep(1000);
     return true;
 }
@@ -378,15 +346,12 @@ async function findAllMatches() {
             const excelArr = record.到达城市.split(' ')[0];
             const excelDate = record.出发日期;
             console.log(`  与 Excel 比较: 注册号="${excelReg}", 出发="${excelDep}", 到达="${excelArr}", 日期="${excelDate}"`);
-            // 修改匹配逻辑：出发和到达使用部分包含
-            const depMatch = parsed && (excelDep.includes(parsed.dep) || parsed.dep.includes(excelDep));
-            const arrMatch = parsed && (excelArr.includes(parsed.arr) || parsed.arr.includes(excelArr));
-            if (normalizedReg === excelReg && depMatch && arrMatch && dateStr === excelDate) {
+            if (normalizedReg === excelReg && parsed && parsed.dep === excelDep && parsed.arr === excelArr && dateStr === excelDate) {
                 console.log(`  ✅ 匹配成功！`);
                 matches.push({ row, matchedExcel: record });
                 break;
             } else {
-                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${depMatch}, 到达匹配=${arrMatch}, 日期匹配=${dateStr === excelDate}`);
+                console.log(`  ❌ 匹配失败: 注册号匹配=${normalizedReg === excelReg}, 出发匹配=${parsed && parsed.dep === excelDep}, 到达匹配=${parsed && parsed.arr === excelArr}, 日期匹配=${dateStr === excelDate}`);
             }
         }
     }
@@ -419,7 +384,7 @@ async function processToday() {
 }
 """
 
-# ---------- 次日计划填报脚本模板（保持不变，已集成境内判断） ----------
+# ---------- 次日计划填报脚本模板（保持不变） ----------
 STEP2_SCRIPT_TEMPLATE = """
 // ================= 次日计划填报脚本 =================
 // 生成时间: __DATETIME__
@@ -516,15 +481,12 @@ const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
 const DOMESTIC_KEYWORDS = __DOMESTIC_KEYWORDS__;
 
 function getLocationInfo(city) {
-    // 优先检查详细映射（境内城市）
     const detail = CITY_DETAIL_MAP[city];
     if (detail) {
         return { zone: "境内", region: detail.province, needThirdSelect: true, district: detail.district };
     }
-    // 其次检查普通映射
     const mapped = CITY_MAP[city];
     if (mapped) {
-        // 如果映射的值在境内关键词中，则视为境内
         const isDomestic = DOMESTIC_KEYWORDS.includes(mapped);
         if (isDomestic) {
             return { zone: "境内", region: mapped, needThirdSelect: true };
@@ -532,7 +494,6 @@ function getLocationInfo(city) {
             return { zone: "境外", region: mapped, needThirdSelect: false };
         }
     }
-    // 最后使用关键词判断
     const isDomestic = DOMESTIC_KEYWORDS.some(keyword => city.includes(keyword));
     if (isDomestic) {
         let region = city.split(/[\\s\\-]/)[0];
@@ -614,7 +575,6 @@ async function fillSegmentSelects(container, city) {
         return true;
     }
     
-    // 境内
     const detail = CITY_DETAIL_MAP[city];
     if (!detail) {
         console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
@@ -965,7 +925,7 @@ if uploaded_file is not None:
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        # 分离当日和次日数据：基于出发日期和实际到达
+        # 分离当日和次日数据
         df["出发日期"] = pd.to_datetime(df["出发日期"]).dt.date
         df_today = df[(df["出发日期"] == today) & (df["实际到达"].notna()) & (df["实际到达"] != "")].copy()
         df_tomorrow = df[df["出发日期"] > today].copy()
@@ -995,8 +955,8 @@ if uploaded_file is not None:
         city_detail_map_json = json.dumps(city_detail_map, ensure_ascii=False, indent=4)
         domestic_keywords_json = json.dumps(DOMESTIC_KEYWORDS, ensure_ascii=False)
 
-        with st.expander("✏️ 编辑当日数据处理脚本（可选）"):
-            step1_template = st.text_area("当日脚本", value=DEFAULT_STEP1_TEMPLATE, height=400, key="step1")
+        # 使用预设的当日脚本模板（无需用户编辑）
+        step1_template = DEFAULT_STEP1_TEMPLATE
         step2_template = STEP2_SCRIPT_TEMPLATE
 
         with st.spinner("正在生成脚本..."):
