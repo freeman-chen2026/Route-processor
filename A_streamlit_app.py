@@ -186,7 +186,7 @@ def generate_js_script(df_today, df_tomorrow, step1_template, step2_template, ci
 """
     return combined_script
 
-# ---------- 当日数据处理脚本模板（已修正：使用列索引定位编辑按钮） ----------
+# ---------- 当日数据处理脚本模板（已修正：改进 fillActualArrival 定位） ----------
 DEFAULT_STEP1_TEMPLATE = """
 // ================= 当日数据处理脚本 =================
 // 配置区
@@ -277,38 +277,102 @@ async function clickEditButton(row) {
 
 async function fillActualArrival(record) {
     const doc = await getCurrentDoc();
-    const actualArrivalInput = doc.querySelector('#actualArrival') || 
-                               doc.evaluate('//*[contains(text(), "实际到达")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!doc) return false;
+
+    // 1. 查找“实际到达”输入框（多种方式）
+    let actualArrivalInput = null;
+    // 方式1：通过常见 ID
+    actualArrivalInput = doc.querySelector('#actualArrival, #actualArrivalTime, #arrivalTime, #actual_time');
+    // 方式2：通过包含“实际到达”文本的标签定位其后的输入框
+    if (!actualArrivalInput) {
+        const label = doc.evaluate('//*[contains(text(), "实际到达")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (label) {
+            // 尝试找同级或父级内的 input
+            actualArrivalInput = label.parentNode?.querySelector('input') ||
+                                 label.nextElementSibling?.querySelector('input');
+        }
+    }
+    // 方式3：通过 XPath 直接查找包含“实际到达”的输入框（假设输入框附近有文本）
+    if (!actualArrivalInput) {
+        const xpath = '//*[contains(text(), "实际到达")]/following-sibling::*//input';
+        actualArrivalInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
+    // 方式4：尝试已知的绝对路径（根据用户提供的示例，可能是 div[9] 或 div[10] 等，但不确定，这里作为备选）
+    if (!actualArrivalInput) {
+        // 尝试查找所有 input，假设第二个是实际到达（实际情况可能不同）
+        const allInputs = doc.querySelectorAll('input');
+        if (allInputs.length >= 2) {
+            actualArrivalInput = allInputs[1]; // 假设第二个输入框是实际到达
+            console.warn('使用第2个输入框作为实际到达输入框');
+        }
+    }
     if (actualArrivalInput) {
         actualArrivalInput.value = record.实际到达;
         actualArrivalInput.dispatchEvent(new Event('input', { bubbles: true }));
         console.log(`已填入实际到达时间: ${record.实际到达}`);
     } else {
         console.warn('未找到实际到达输入框，跳过该字段');
+        // 输出所有输入框的 id/name/placeholder 以便调试
+        const inputs = doc.querySelectorAll('input');
+        console.log('页面中的输入框:', Array.from(inputs).map(i => ({ id: i.id, name: i.name, placeholder: i.placeholder })));
     }
-    const actualDepartureInput = doc.querySelector('#actualDeparture') ||
-                                 doc.evaluate('//*[contains(text(), "实际出发")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+
+    // 2. 查找“实际出发”输入框（可选）
+    let actualDepartureInput = null;
+    // 通过包含“实际出发”文本的标签定位
+    const depLabel = doc.evaluate('//*[contains(text(), "实际出发")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (depLabel) {
+        actualDepartureInput = depLabel.parentNode?.querySelector('input') ||
+                               depLabel.nextElementSibling?.querySelector('input');
+    }
+    if (!actualDepartureInput) {
+        const xpath = '//*[contains(text(), "实际出发")]/following-sibling::*//input';
+        actualDepartureInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
     if (actualDepartureInput && record.实际出发) {
         actualDepartureInput.value = record.实际出发;
         actualDepartureInput.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log(`已填入实际出发时间: ${record.实际出发}`);
     }
-    const actualFlightTimeInput = doc.querySelector('#actualFlightTime') ||
-                                  doc.evaluate('//*[contains(text(), "实际飞行时间")]/following-sibling::*//input', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+
+    // 3. 查找“实际飞行时间”输入框（可选）
+    let actualFlightTimeInput = null;
+    const timeLabel = doc.evaluate('//*[contains(text(), "实际飞行时间")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (timeLabel) {
+        actualFlightTimeInput = timeLabel.parentNode?.querySelector('input') ||
+                                timeLabel.nextElementSibling?.querySelector('input');
+    }
+    if (!actualFlightTimeInput) {
+        const xpath = '//*[contains(text(), "实际飞行时间")]/following-sibling::*//input';
+        actualFlightTimeInput = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
     if (actualFlightTimeInput && record.实际飞行时间) {
         actualFlightTimeInput.value = record.实际飞行时间;
         actualFlightTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log(`已填入实际飞行时间: ${record.实际飞行时间}`);
     }
-    const submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue ||
-                      doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+
+    // 4. 查找“保存”按钮
+    let submitBtn = doc.evaluate('//button[contains(text(), "保存")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!submitBtn) {
+        submitBtn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
+    if (!submitBtn) {
+        submitBtn = doc.evaluate('//input[@value="保存"]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
     if (submitBtn) {
         submitBtn.click();
         console.log('已提交保存');
         await sleep(2000);
         await waitForElement('input.query.yuanjiao', 15000);
         return true;
+    } else {
+        console.warn('未找到保存按钮');
+        // 输出所有按钮文本，便于调试
+        const btns = doc.querySelectorAll('button, input[type="submit"], input[type="button"]');
+        console.log('页面中的按钮:', Array.from(btns).map(b => b.innerText || b.value));
+        return false;
     }
-    console.warn('未找到保存按钮');
-    return false;
 }
 
 async function processOnePlan(row, matchedExcel) {
