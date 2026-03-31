@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import json
 import re
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 # ---------- 内置国家名称列表（用于智能识别境外城市） ----------
 COUNTRIES = [
@@ -778,32 +778,43 @@ if uploaded_file is not None:
         df.columns = df.columns.str.strip()
         df = df.dropna(how='all')
         st.success("文件上传成功！")
-        st.subheader("📊 数据预览（前5行）")
-        st.dataframe(df.head())
 
+        # 检查必要列
         required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             st.error(f"❌ 缺少必要列: {missing}")
             st.info(f"实际列名: {list(df.columns)}")
         else:
-            st.info(f"✅ 共读取 {len(df)} 条飞行计划")
+            # 解析出发日期，并过滤出次日计划
+            df['出发日期'] = pd.to_datetime(df['出发日期']).dt.date
+            today = date.today()
+            tomorrow = today + timedelta(days=1)
+            df_tomorrow = df[df['出发日期'] == tomorrow].copy()
 
-            # 立即生成脚本（无需按钮）
-            with st.spinner("正在构建城市映射并生成脚本..."):
-                custom_detail_map = {}
-                city_map, detail_map = build_city_mappings(df, custom_detail_map)
-                city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
-                detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
-                flight_records_json = generate_flight_records(df)
-                st.subheader("🔍 城市映射预览（前10个）")
-                preview_map = {k: v for k, v in list(city_map.items())[:10]}
-                st.json(preview_map)
-                final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
-                st.success("脚本生成成功！")
-                st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
-                st.code(final_script, language="javascript")
-                st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
+            if df_tomorrow.empty:
+                st.warning(f"⚠️ 未找到出发日期为 {tomorrow} 的次日计划，脚本将无法生成。")
+                st.info("请检查文件中是否包含次日（明日）的飞行计划。")
+            else:
+                st.info(f"✅ 筛选出 {len(df_tomorrow)} 条次日计划（出发日期 = {tomorrow}）")
+                st.subheader("📊 次日计划预览")
+                st.dataframe(df_tomorrow.head())
+
+                # 生成脚本（使用过滤后的数据）
+                with st.spinner("正在构建城市映射并生成脚本..."):
+                    custom_detail_map = {}
+                    city_map, detail_map = build_city_mappings(df_tomorrow, custom_detail_map)
+                    city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
+                    detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
+                    flight_records_json = generate_flight_records(df_tomorrow)
+                    st.subheader("🔍 城市映射预览（前10个）")
+                    preview_map = {k: v for k, v in list(city_map.items())[:10]}
+                    st.json(preview_map)
+                    final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
+                    st.success("脚本生成成功！")
+                    st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
+                    st.code(final_script, language="javascript")
+                    st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
 else:
