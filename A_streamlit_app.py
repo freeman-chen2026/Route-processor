@@ -61,6 +61,11 @@ function normalizeReg(reg) {{
     return reg.replace(/[-\s]/g, '').trim();
 }}
 
+// 为计划生成唯一标识
+function getPlanKey(plan) {{
+    return `${{plan["飞机注册号"]}}_${{plan["出发日期"]}}_${{plan["出发城市"]}}_${{plan["到达城市"]}}`;
+}}
+
 // 获取 iframe 文档，确保加载完成
 async function getMainDoc() {{
     const iframe = document.querySelector('#' + IFRAME_ID);
@@ -89,8 +94,8 @@ async function waitForTable() {{
     return null;
 }}
 
-// 获取第一个匹配的计划
-async function getFirstMatch() {{
+// 获取第一个匹配的计划（跳过已处理的）
+async function getFirstMatch(processedKeys) {{
     const rows = await waitForTable();
     if (!rows) return null;
     console.log(`📋 找到 ${{rows.length}} 个计划行，开始匹配...`);
@@ -121,20 +126,21 @@ async function getFirstMatch() {{
         const depKeywords = extract(depPart);
         const arrKeywords = extract(arrPart);
         console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，日期 ${{webDate}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
-        const matched = excelData.find(r => 
-            normalizeReg(r["飞机注册号"]) === regNo &&
-            (() => {{
-                const depCity = r["出发城市"] || "";
-                const arrCity = r["到达城市"] || "";
-                const depMatch = depKeywords.some(kw => depCity.includes(kw));
-                const arrMatch = arrKeywords.some(kw => arrCity.includes(kw));
-                return depMatch && arrMatch;
-            }})() &&
-            r["出发日期"] === webDate
-        );
-        if (matched) {{
-            console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}`);
-            return {{ row, matchedExcel: matched }};
+
+        // 遍历 excelData，找到第一个匹配且未处理的计划
+        for (let r of excelData) {{
+            const key = getPlanKey(r);
+            if (processedKeys.has(key)) continue; // 已处理过，跳过
+
+            const regMatch = normalizeReg(r["飞机注册号"]) === regNo;
+            const depMatch = depKeywords.some(kw => (r["出发城市"] || "").includes(kw));
+            const arrMatch = arrKeywords.some(kw => (r["到达城市"] || "").includes(kw));
+            const dateMatch = r["出发日期"] === webDate;
+
+            if (regMatch && depMatch && arrMatch && dateMatch) {{
+                console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}，计划 key: ${{key}}`);
+                return {{ row, matchedExcel: r, planKey: key }};
+            }}
         }}
     }}
     console.log('❌ 没有找到任何匹配的计划');
@@ -386,14 +392,20 @@ async function processOnePlan(planRow, matchedExcel) {{
 (async () => {{
     console.log('🚀 开始执行自动化流程...');
     let processedCount = 0;
+    const processedKeys = new Set();  // 记录已处理的计划唯一标识
+
     while (true) {{
-        const match = await getFirstMatch();
+        const match = await getFirstMatch(processedKeys);
         if (!match) {{
             console.log('🎉 没有更多匹配的计划，流程结束。');
             break;
         }}
+
+        // 立即标记为已处理，避免重复
+        processedKeys.add(match.planKey);
         processedCount++;
         console.log(`\\n========== 处理第 ${{processedCount}} 个匹配计划 ==========`);
+
         const success = await processOnePlan(match.row, match.matchedExcel);
         if (!success) {{
             console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
