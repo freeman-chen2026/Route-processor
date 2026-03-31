@@ -305,21 +305,22 @@ async function getFirstMatch(processedKeys) {{
     return null;
 }}
 
-async function waitForElement(xpath, timeout = 15000, isXPath = false) {{
+// 修改 waitForElement 函数，默认按 XPath 处理，支持 CSS 选择器通过第三个参数 false
+async function waitForElement(selector, timeout = 15000, isXPath = true) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
         const doc = await getMainDoc();
         if (!doc) return null;
         let el;
         if (isXPath) {{
-            el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         }} else {{
-            el = doc.querySelector(xpath);
+            el = doc.querySelector(selector);
         }}
         if (el) return el;
         await sleep(300);
     }}
-    console.warn(`⚠️ 等待元素超时: ${{xpath}}`);
+    console.warn(`⚠️ 等待元素超时: ${{selector}}`);
     return null;
 }}
 
@@ -478,7 +479,8 @@ async function waitForReturnToList(timeout = 300000) {{
 }}
 
 async function ensureListPage() {{
-    const btn = await waitForElement('input.query.yuanjiao', 15000);
+    // CSS 选择器调用需传递 false
+    const btn = await waitForElement('input.query.yuanjiao', 15000, false);
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getMainDoc();
@@ -489,12 +491,12 @@ async function ensureListPage() {{
         closeBtn.click();
         console.log('已点击关闭按钮，等待返回列表页');
         await sleep(1000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 10000, false);
         return backBtn !== null;
     }} else {{
         console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
         await sleep(5000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 5000, false);
         return backBtn !== null;
     }}
 }}
@@ -603,7 +605,8 @@ const getCurrentDoc = getMainDoc;
 
 // 次日计划专用函数（与当日脚本中的 ensureListPage 同名，但无妨）
 async function ensureListPage() {{
-    const btn = await waitForElement('input.query.yuanjiao', 15000);
+    // 注意：这里也使用 CSS 选择器，需传递 false
+    const btn = await waitForElement('input.query.yuanjiao', 15000, false);
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getCurrentDoc();
@@ -614,12 +617,12 @@ async function ensureListPage() {{
         closeBtn.click();
         console.log('已点击关闭按钮，等待返回列表页');
         await sleep(1000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 10000, false);
         return backBtn !== null;
     }} else {{
         console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
         await sleep(5000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 5000, false);
         return backBtn !== null;
     }}
 }}
@@ -840,7 +843,7 @@ async function processNextDayRecord(record) {{
         return false;
     }}
 
-    const addBtn = await waitForElement('input.query.yuanjiao');
+    const addBtn = await waitForElement('input.query.yuanjiao', 15000, false);
     if (!addBtn) {{
         console.error('未找到添加按钮，终止流程');
         return false;
@@ -959,7 +962,7 @@ async function processNextDayRecord(record) {{
             console.warn('未找到确定按钮，请手动点击');
         }}
         console.log('等待返回列表页...');
-        await waitForElement('input.query.yuanjiao', 15000);
+        await waitForElement('input.query.yuanjiao', 15000, false);
         console.log(`处理完成：${{record.reg}}`);
     }} else {{
         console.warn('未找到提交按钮');
