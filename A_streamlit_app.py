@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import re
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 # ---------- 内置国家名称列表（用于智能识别境外城市） ----------
 COUNTRIES = [
@@ -208,39 +208,8 @@ def build_city_mappings(df, custom_detail_map):
 
     return city_map, detail_map
 
-def generate_flight_records(df):
-    records = []
-    for _, row in df.iterrows():
-        purpose_raw = row.get("用途", "")
-        # 如果用途包含“维修”或“调机”，则选择“调机”，否则“自用飞行”
-        if "维修" in purpose_raw or "调机" in purpose_raw:
-            purpose = "调机"
-        else:
-            purpose = "自用飞行"
-        start_date = str(row["出发日期"])
-        end_date = str(row["到达日期"])
-        flight_time = row.get("预计飞行时间", "")
-        hours, minutes = parse_flight_time(flight_time)
-        dep_city = str(row["出发城市"]).strip()
-        arr_city = str(row["到达城市"]).strip()
-        reg_raw = str(row["飞机注册号"]).strip()
-        record = {
-            "reg": reg_raw,
-            "start_date": start_date,
-            "end_date": end_date,
-            "purpose": purpose,
-            "dep_city": dep_city,
-            "arr_city": arr_city,
-            "flight_hours": hours,
-            "flight_minutes": minutes
-        }
-        records.append(record)
-    return json.dumps(records, ensure_ascii=False, indent=4)
-
-# ---------- 当日计划脚本生成（已修改去重版本） ----------
-def generate_daily_script(records, city_map_json, city_detail_map_json, domestic_keywords_json):
-    # 生成当日计划脚本（使用原来的结构，但融入公共函数）
-    # 注意：这里的 records 是已经筛选过的有实际到达时间的计划
+# ---------- 当日计划脚本生成（包含去重逻辑） ----------
+def generate_daily_script(records, city_map_json, detail_map_json, domestic_keywords_json):
     js_data = json.dumps(records, ensure_ascii=False, indent=4)
     script = f"""
 // ================= 自动生成的飞行计划脚本（当日计划） =================
@@ -605,24 +574,26 @@ async function runDailyPlans() {{
 """
     return script
 
-# ---------- 次日计划备案脚本生成 ----------
-def generate_nextday_script(records, city_map_json, city_detail_map_json, domestic_keywords_json):
-    # 生成次日计划脚本（使用原次日计划备案的逻辑）
+# ---------- 次日计划备案脚本生成（仅包含次日专用函数，依赖当日已定义的辅助函数） ----------
+def generate_nextday_script(records, city_map_json, detail_map_json, domestic_keywords_json):
     flight_records_json = json.dumps(records, ensure_ascii=False, indent=4)
+    # 次日计划模板（只包含流程函数，不重复定义辅助函数）
     template = f"""
 // ================= 自动生成的飞行计划脚本（次日计划备案） =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 次日待处理计划数: {len(records)}
 // =========================================================
 
-// 以下函数将复用之前定义的辅助函数（sleep, getMainDoc, waitForElement, setSelectValue, setDateInput, setNumberInput）
-// 新增次日计划专用函数
+// 以下函数将复用之前定义的辅助函数（sleep, getMainDoc, waitForElement, setSelectValue, setDateInput, setNumberInput, getLocationInfo, CITY_MAP 等）
+// 为兼容次日代码，将 getCurrentDoc 映射为 getMainDoc
+const getCurrentDoc = getMainDoc;
 
+// 次日计划专用函数
 async function ensureListPage() {{
     const btn = await waitForElement('input.query.yuanjiao', 15000);
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
-    const doc = await getMainDoc();
+    const doc = await getCurrentDoc();
     let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -640,7 +611,7 @@ async function ensureListPage() {{
     }}
 }}
 
-const CITY_DETAIL_MAP = {city_detail_map_json};
+const CITY_DETAIL_MAP = {detail_map_json};
 
 async function fillSegmentSelects(container, city) {{
     const selects = container.querySelectorAll('select');
@@ -788,7 +759,7 @@ async function selectAircraft(reg) {{
         console.warn('未找到飞机选择对话框');
         return false;
     }}
-    const doc = await getMainDoc();
+    const doc = await getCurrentDoc();
     
     let span = doc.evaluate(`//span[text()='${{regForSelect}}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!span) {{
@@ -839,7 +810,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {{
         if (!btn) btn = document.evaluate('//button[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         if (btn) return btn;
         try {{
-            const doc = await getMainDoc();
+            const doc = await getCurrentDoc();
             btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (btn) return btn;
@@ -878,7 +849,7 @@ async function processNextDayRecord(record) {{
         return false;
     }}
 
-    const doc = await getMainDoc();
+    const doc = await getCurrentDoc();
     const specialSelect = doc.querySelector('#specialf');
     if (specialSelect) await setSelectValue(specialSelect, "否");
     else console.warn('未找到是否特殊任务飞行 select');
@@ -1028,10 +999,14 @@ if uploaded_file is not None:
             st.error(f"❌ 缺少必要列: {missing}")
             st.info(f"实际列名: {list(df.columns)}")
         else:
-            # 分离当日计划（有实际到达时间）和次日计划（无实际到达时间或航段状态为准备中/已放行）
+            # 分离当日计划（有实际到达时间）和次日计划（出发日期为明天）
             df_daily = df[df["实际到达"].notna() & (df["实际到达"].astype(str).str.strip() != "")].copy()
-            df_nextday = df[df["实际到达"].isna() | (df["实际到达"].astype(str).str.strip() == "")].copy()
-            st.info(f"✅ 共读取 {len(df)} 条飞行计划，其中当日计划（已执飞）: {len(df_daily)} 条，次日计划（未执飞）: {len(df_nextday)} 条")
+            # 次日计划：出发日期 = 明天（根据系统日期判断）
+            df['出发日期'] = pd.to_datetime(df['出发日期']).dt.date
+            today = date.today()
+            tomorrow = today + timedelta(days=1)
+            df_nextday = df[df['出发日期'] == tomorrow].copy()
+            st.info(f"✅ 共读取 {len(df)} 条飞行计划，其中当日计划（已执飞）: {len(df_daily)} 条，次日计划（出发日期为 {tomorrow}）: {len(df_nextday)} 条")
 
             if len(df_daily) == 0 and len(df_nextday) == 0:
                 st.warning("没有需要处理的计划。")
@@ -1115,4 +1090,4 @@ else:
     st.info("请上传 Excel 文件开始")
 
 st.markdown("---")
-st.caption("本工具自动区分当日已执飞计划（有实际到达时间）和次日未执飞计划，生成一键执行的 JavaScript 脚本。")
+st.caption("本工具自动区分当日已执飞计划（有实际到达时间）和次日未执飞计划（出发日期为明天），生成一键执行的 JavaScript 脚本。")
