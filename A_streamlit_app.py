@@ -127,10 +127,8 @@ CITY_TO_PROVINCE = {
     "黑河": "黑龙江", "绥化": "黑龙江",
 }
 
-# 中国境内城市关键词（用于判断境内/境外，自动生成）
 DOMESTIC_KEYWORDS = list(CITY_TO_PROVINCE.keys())
 
-# 默认境内机场详细映射（用于需要精确区县的特殊情况）
 DEFAULT_DETAIL_MAP = {
     "北京首都": {"province": "北京", "district": "顺义区"},
     "北京大兴": {"province": "北京", "district": "大兴区"},
@@ -165,11 +163,9 @@ def get_province_from_city(city):
     return city.split()[0] if city.split() else city
 
 def extract_district_from_city(city):
-    """从城市名中提取区县名：优先匹配CITY_TO_PROVINCE中的关键词，取第一个匹配的关键词"""
     for keyword in CITY_TO_PROVINCE.keys():
         if keyword in city:
             return keyword
-    # 未匹配到，取第一个词并去掉“机场”后缀
     district = city.split()[0] if city.split() else city
     if district.endswith('机场'):
         district = district[:-2]
@@ -187,14 +183,11 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
-        # 如果已存在详细映射，直接使用
         if city in detail_map:
             province = detail_map[city]["province"]
-            district = detail_map[city]["district"]
             city_map[city] = province
             continue
 
-        # 判断境内
         is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
         if is_domestic:
             province = get_province_from_city(city)
@@ -204,11 +197,9 @@ def build_city_mappings(df, custom_detail_map):
         else:
             country = extract_country(city)
             city_map[city] = country
-            # 境外城市不加入 detail_map
 
     return city_map, detail_map
 
-# ---------- 当日计划脚本生成（包含去重逻辑） ----------
 def generate_daily_script(records, city_map_json, detail_map_json, domestic_keywords_json):
     js_data = json.dumps(records, ensure_ascii=False, indent=4)
     script = f"""
@@ -224,7 +215,6 @@ const REG_SELECTOR = 'td:nth-child(6) div';
 const SEGMENT_SELECTOR = 'td:nth-child(7) div';
 const DATE_SELECTOR = 'td:nth-child(9)';
 
-// 从 Excel 提取的数据
 const excelData = {js_data};
 
 // ================= 辅助函数 =================
@@ -315,12 +305,17 @@ async function getFirstMatch(processedKeys) {{
     return null;
 }}
 
-async function waitForElement(xpath, timeout = 15000) {{
+async function waitForElement(xpath, timeout = 15000, isXPath = false) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
         const doc = await getMainDoc();
         if (!doc) return null;
-        const el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        let el;
+        if (isXPath) {{
+            el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        }} else {{
+            el = doc.querySelector(xpath);
+        }}
         if (el) return el;
         await sleep(300);
     }}
@@ -482,6 +477,28 @@ async function waitForReturnToList(timeout = 300000) {{
     return false;
 }}
 
+async function ensureListPage() {{
+    const btn = await waitForElement('input.query.yuanjiao', 15000);
+    if (btn) return true;
+    console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
+    const doc = await getMainDoc();
+    let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    if (closeBtn) {{
+        closeBtn.click();
+        console.log('已点击关闭按钮，等待返回列表页');
+        await sleep(1000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
+        return backBtn !== null;
+    }} else {{
+        console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
+        await sleep(5000);
+        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
+        return backBtn !== null;
+    }}
+}}
+
 async function processOnePlan(planRow, matchedExcel) {{
     console.log(`\\n🔧 开始处理计划：机号 ${{matchedExcel["飞机注册号"]}}`);
     const execBtn = planRow.querySelector('.icon-qidong, [class*="icon-qidong"]');
@@ -559,36 +576,32 @@ async function runDailyPlans() {{
 
         const success = await processOnePlan(match.row, match.matchedExcel);
         if (!success) {{
-            console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
-            const backBtnXPath = '/html/body/div[1]/div/div[3]/div/div[2]/form/div[22]/ul/li[2]/input';
-            const backBtn = await waitForElement(backBtnXPath, 3000);
-            if (backBtn) backBtn.click();
+            console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试返回列表页...`);
+            await ensureListPage();  // 强制返回列表页
             await sleep(2000);
         }} else {{
             console.log(`✅ 第 ${{processedCount}} 个计划处理完成并已返回列表页。`);
         }}
         await sleep(1000);
     }}
+    // 最终确保返回列表页
+    await ensureListPage();
     console.log('🎉 所有当日计划处理完毕！');
 }}
 """
     return script
 
-# ---------- 次日计划备案脚本生成（仅包含次日专用函数，依赖当日已定义的辅助函数） ----------
 def generate_nextday_script(records, city_map_json, detail_map_json, domestic_keywords_json):
     flight_records_json = json.dumps(records, ensure_ascii=False, indent=4)
-    # 次日计划模板（只包含流程函数，不重复定义辅助函数）
     template = f"""
 // ================= 自动生成的飞行计划脚本（次日计划备案） =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 次日待处理计划数: {len(records)}
 // =========================================================
 
-// 以下函数将复用之前定义的辅助函数（sleep, getMainDoc, waitForElement, setSelectValue, setDateInput, setNumberInput, getLocationInfo, CITY_MAP 等）
-// 为兼容次日代码，将 getCurrentDoc 映射为 getMainDoc
 const getCurrentDoc = getMainDoc;
 
-// 次日计划专用函数
+// 次日计划专用函数（与当日脚本中的 ensureListPage 同名，但无妨）
 async function ensureListPage() {{
     const btn = await waitForElement('input.query.yuanjiao', 15000);
     if (btn) return true;
@@ -627,7 +640,6 @@ async function fillSegmentSelects(container, city) {{
         return true;
     }}
     
-    // 境内
     const detail = CITY_DETAIL_MAP[city];
     if (!detail) {{
         console.warn(`未找到城市 ${{city}} 的详细映射，将使用降级处理`);
@@ -862,7 +874,6 @@ async function processNextDayRecord(record) {{
     if (operateSelect) await setSelectValue(operateSelect, "否");
     else console.warn('未找到是否经营性作业 select');
 
-    // 用途下拉框
     const purposeSelect = await waitForElement('//*[contains(text(), "非经营活动")]/following-sibling::*//select', 10000, true);
     if (purposeSelect) await setSelectValue(purposeSelect, record.purpose);
     else console.warn('未找到用途下拉框');
@@ -993,7 +1004,7 @@ if uploaded_file is not None:
         st.subheader("📊 数据预览（前5行）")
         st.dataframe(df.head())
 
-        required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间", "实际到达", "航段状态"]
+        required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间", "实际到达"]
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             st.error(f"❌ 缺少必要列: {missing}")
@@ -1001,7 +1012,6 @@ if uploaded_file is not None:
         else:
             # 分离当日计划（有实际到达时间）和次日计划（出发日期为明天）
             df_daily = df[df["实际到达"].notna() & (df["实际到达"].astype(str).str.strip() != "")].copy()
-            # 次日计划：出发日期 = 明天（根据系统日期判断）
             df['出发日期'] = pd.to_datetime(df['出发日期']).dt.date
             today = date.today()
             tomorrow = today + timedelta(days=1)
@@ -1018,14 +1028,14 @@ if uploaded_file is not None:
                 detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
                 domestic_keywords_json = json.dumps(DOMESTIC_KEYWORDS)
 
-                # 生成当日计划数据（用于当日脚本）
+                # 生成当日计划数据
                 daily_records = df_daily.to_dict(orient="records")
                 for rec in daily_records:
                     for k, v in rec.items():
                         if pd.isna(v):
                             rec[k] = ""
 
-                # 生成次日计划数据（用于次日脚本）
+                # 生成次日计划数据
                 nextday_records = []
                 for _, row in df_nextday.iterrows():
                     purpose_raw = row.get("用途", "")
@@ -1053,10 +1063,10 @@ if uploaded_file is not None:
 
                 # 生成当日脚本（包含所有辅助函数和当日流程）
                 daily_script = generate_daily_script(daily_records, city_map_json, detail_map_json, domestic_keywords_json) if len(daily_records) > 0 else ""
-                # 生成次日脚本（只包含次日专用函数和次日流程，依赖当日已定义的辅助函数）
+                # 生成次日脚本
                 nextday_script = generate_nextday_script(nextday_records, city_map_json, detail_map_json, domestic_keywords_json) if len(nextday_records) > 0 else ""
 
-                # 组合最终脚本：当日脚本（已包含辅助函数） + 次日脚本（仅流程函数），最后调用主入口顺序执行
+                # 组合最终脚本
                 final_script = daily_script + "\n\n" + nextday_script + """
 // ================= 主入口：先执行当日计划，再执行次日计划 =================
 (async () => {
