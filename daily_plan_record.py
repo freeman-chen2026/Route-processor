@@ -31,7 +31,6 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
     st.success(f"文件加载成功，共 {len(df)} 条记录")
 
-    # 必需的列（航班号可选，但保留用于显示）
     required_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
     missing = [col for col in required_cols if col not in df.columns]
     if missing:
@@ -49,7 +48,6 @@ if uploaded_file is not None:
 
     st.info(f"共筛选出 {len(df_filtered)} 条当日/次日计划（今日: {(df_filtered['出发日期_obj'].dt.date == today).sum()}, 明日: {(df_filtered['出发日期_obj'].dt.date == tomorrow).sum()}）")
     st.subheader("📊 待处理的计划（当日/次日）")
-    # 显示时包含航班号（如果有）
     display_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
     if "航班号" in df.columns:
         display_cols.insert(1, "航班号")
@@ -58,9 +56,7 @@ if uploaded_file is not None:
     # 准备数据供 JavaScript 使用
     records = df_filtered.to_dict(orient="records")
     for rec in records:
-        # 删除不可 JSON 序列化的 Timestamp 字段
         rec.pop("出发日期_obj", None)
-        # 转换日期格式为 YYYYMMDD（用于比对）
         rec["出发日期_yyyymmdd"] = pd.to_datetime(rec["出发日期"]).strftime("%Y%m%d")
         rec["计划出发_hhmm"] = rec["计划出发"].replace(":", "") if isinstance(rec["计划出发"], str) else ""
         rec["计划到达_hhmm"] = rec["预计到达"].replace(":", "") if isinstance(rec["预计到达"], str) else ""
@@ -69,48 +65,37 @@ if uploaded_file is not None:
 
     js_data = json.dumps(records, ensure_ascii=False, indent=2)
 
-    # 生成 JavaScript 脚本（航班号输入框填写注册号）
+    # 生成 JavaScript 脚本（包含完整逻辑）
     script = f"""
 // ================= 自动生成的当日/次日计划备案脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 // 需要比对的计划数: {len(df_filtered)}
 // ================================================================
 
-// ================= 配置区（使用用户提供的精确 XPath） =================
-// 表格行 XPath（用于获取所有计划行）
+// ================= 配置区 =================
 const ROW_XPATH = '/html/body/div[1]/div[3]/div/div/div/div[2]/div[4]/div[2]/div/table/tbody/tr';
-// 行内各字段的 CSS 选择器（相对于行）
-const DATE_SELECTOR = 'td:nth-child(10) div';      // 执行日（格式 20260404）
-const REG_SELECTOR = 'td:nth-child(8) div';        // 注册号
-const DEP_AIRPORT_SELECTOR = 'td:nth-child(11) div'; // 起飞机场
-const ARR_AIRPORT_SELECTOR = 'td:nth-child(14) div'; // 落地机场
-
-// 新增按钮 XPath
+const DATE_SELECTOR = 'td:nth-child(10) div';
+const REG_SELECTOR = 'td:nth-child(8) div';
+const DEP_AIRPORT_SELECTOR = 'td:nth-child(11) div';
+const ARR_AIRPORT_SELECTOR = 'td:nth-child(14) div';
 const ADD_BTN_XPATH = '/html/body/div[1]/div[2]/div/table/tbody/tr/td[1]/a[1]/span/span[2]';
-
-// 弹窗根元素 XPath（用于检测弹窗是否关闭）
 const MODAL_ROOT_XPATH = '/html/body/div[2]';
-
-// 弹窗内各字段的 XPath（用户提供）
 const AIRCRAFT_TYPE_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[2]/span/span/input';
-const DATE_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/input';  // 直接输入日期
+const DATE_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/input';
 const REMOTE_RUN_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[6]/span/span/input';
 const TASK_TYPE_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[6]/span/span/input';
-const FLIGHT_NO_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span/span/input';  // 航班号输入框（实际填写注册号）
-const REG_SPAN_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span';  // 注册号显示（已废弃？保留兼容）
+const FLIGHT_NO_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span/span/input';
+const REG_SPAN_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span';
 const REG_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[10]/span/span/input';
 const DEP_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[2]/span/span/input';
 const ARR_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[8]/span/span/input';
 const DEP_TIME_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[4]/span/span/input';
 const ARR_TIME_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[6]/span/span/input';
 
-// 从 Excel 提取的待比对计划
 const pendingPlans = {js_data};
 
 // ================= 辅助函数 =================
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
-
-// 等待元素（XPath）
 async function waitForElement(xpath, timeout = 15000) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
@@ -121,8 +106,6 @@ async function waitForElement(xpath, timeout = 15000) {{
     console.warn(`⚠️ 等待元素超时: ${{xpath}}`);
     return null;
 }}
-
-// 设置输入框的值
 function setInputValue(el, value) {{
     if (!el) return false;
     el.value = value;
@@ -131,8 +114,6 @@ function setInputValue(el, value) {{
     el.blur();
     return true;
 }}
-
-// 点击元素
 async function clickElement(xpath, timeout = 10000) {{
     const el = await waitForElement(xpath, timeout);
     if (el) {{
@@ -143,8 +124,6 @@ async function clickElement(xpath, timeout = 10000) {{
     console.error(`❌ 未找到元素: ${{xpath}}`);
     return false;
 }}
-
-// 获取网页中已存在的计划（用于比对）
 function getExistingPlans() {{
     const rows = document.evaluate(ROW_XPATH, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
     const plans = [];
@@ -165,8 +144,6 @@ function getExistingPlans() {{
     }}
     return plans;
 }}
-
-// 判断计划是否已存在
 function isPlanExists(plan, existingPlans) {{
     return existingPlans.some(p => 
         p.date === plan.出发日期_yyyymmdd &&
@@ -176,112 +153,98 @@ function isPlanExists(plan, existingPlans) {{
     );
 }}
 
-// 填写弹窗内的表单（等待用户手动点击“保存”）
-async function fillAndWait(plan) {{
-    console.log(`\\n🔧 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
-
-    // 1. 点击“新增”
-    if (!(await clickElement(ADD_BTN_XPATH))) return false;
-    await sleep(1000); // 等待弹窗出现
-
-    // 2. 填写机型
-    const aircraftInput = await waitForElement(AIRCRAFT_TYPE_XPATH, 10000);
-    if (aircraftInput) {{
-        setInputValue(aircraftInput, plan.机型);
-        console.log(`📝 已填写机型: ${{plan.机型}}`);
-    }} else {{
-        console.warn('未找到机型输入框，跳过');
-    }}
-
-    // 3. 填写日期（直接输入框）
-    const dateInput = await waitForElement(DATE_INPUT_XPATH, 10000);
-    if (dateInput) {{
-        setInputValue(dateInput, plan.出发日期);
-        console.log(`📅 已填写日期: ${{plan.出发日期}}`);
-    }} else {{
-        console.warn('未找到日期输入框，请手动填写');
-    }}
-
-    // 4. 本计划航空器是否异地运行：直接填入"是"
-    const remoteInput = await waitForElement(REMOTE_RUN_INPUT_XPATH, 5000);
-    if (remoteInput) {{
-        setInputValue(remoteInput, '是');
-        console.log('✅ 已填写异地运行: 是');
-    }} else {{
-        console.warn('未找到异地运行输入框，请手动填写');
-    }}
-
-    // 5. 任务性质：直接输入
-    const taskInput = await waitForElement(TASK_TYPE_INPUT_XPATH, 5000);
-    if (taskInput) {{
-        setInputValue(taskInput, plan.任务性质);
-        console.log(`📝 已填写任务性质: ${{plan.任务性质}}`);
-    }} else {{
-        console.warn('未找到任务性质输入框，请手动填写');
-    }}
-
-    // 6. 填写航班号（实际填写飞机注册号）
-    const flightNoInput = await waitForElement(FLIGHT_NO_XPATH, 5000);
-    if (flightNoInput) {{
-        setInputValue(flightNoInput, plan.飞机注册号);
-        console.log(`📝 已填写航班号/注册号: ${{plan.飞机注册号}}`);
-    }} else {{
-        console.warn('未找到航班号输入框，请手动填写');
-    }}
-
-    // 7. 填写注册号（两处）
-    const regSpan = await waitForElement(REG_SPAN_XPATH, 5000);
-    if (regSpan) setInputValue(regSpan, plan.飞机注册号);
-    const regInput = await waitForElement(REG_INPUT_XPATH, 5000);
-    if (regInput) setInputValue(regInput, plan.飞机注册号);
-
-    // 8. 起飞机场
-    const depInput = await waitForElement(DEP_INPUT_XPATH, 5000);
-    if (depInput) setInputValue(depInput, plan.出发地);
-
-    // 9. 落地机场
-    const arrInput = await waitForElement(ARR_INPUT_XPATH, 5000);
-    if (arrInput) setInputValue(arrInput, plan.到达地);
-
-    // 10. 起飞时间
-    const depTimeInput = await waitForElement(DEP_TIME_INPUT_XPATH, 5000);
-    if (depTimeInput) setInputValue(depTimeInput, plan.计划出发_hhmm);
-
-    // 11. 落地时间
-    const arrTimeInput = await waitForElement(ARR_TIME_INPUT_XPATH, 5000);
-    if (arrTimeInput) setInputValue(arrTimeInput, plan.计划到达_hhmm);
-
+// ================= 改进的弹窗关闭检测 =================
+async function waitForModalClose() {{
     console.log('✅ 表单填写完成，请手动点击“保存”按钮。');
-    // 等待弹窗根元素消失（用户点击保存后弹窗关闭）
+    console.log('⏳ 等待弹窗关闭（可切换到其他页面，脚本会继续等待）...');
+    console.log('💡 如果弹窗已关闭但脚本未继续，请在控制台输入 window.__forceContinue = true 并回车。');
+    
+    window.__forceContinue = false;
+    
     while (true) {{
         await sleep(2000);
+        
+        if (window.__forceContinue) {{
+            console.log('🔓 手动强制继续，跳过弹窗检测');
+            window.__forceContinue = false;
+            break;
+        }}
+        
         const modalRoot = document.evaluate(MODAL_ROOT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         if (!modalRoot) {{
-            console.log('✅ 弹窗已关闭，继续下一条');
+            console.log('✅ 弹窗已关闭（元素不存在），继续下一条');
+            break;
+        }}
+        
+        const style = window.getComputedStyle(modalRoot);
+        const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        if (!isVisible) {{
+            console.log('✅ 弹窗已关闭（不可见），继续下一条');
             break;
         }}
     }}
     return true;
 }}
 
+// ================= 填写单条计划 =================
+async function fillAndWait(plan) {{
+    console.log(`\\n🔧 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
+    if (!(await clickElement(ADD_BTN_XPATH))) return false;
+    await sleep(1000);
+
+    const aircraftInput = await waitForElement(AIRCRAFT_TYPE_XPATH, 10000);
+    if (aircraftInput) {{
+        setInputValue(aircraftInput, plan.机型);
+        console.log(`📝 已填写机型: ${{plan.机型}}`);
+    }}
+    const dateInput = await waitForElement(DATE_INPUT_XPATH, 10000);
+    if (dateInput) {{
+        setInputValue(dateInput, plan.出发日期);
+        console.log(`📅 已填写日期: ${{plan.出发日期}}`);
+    }}
+    const remoteInput = await waitForElement(REMOTE_RUN_INPUT_XPATH, 5000);
+    if (remoteInput) {{
+        setInputValue(remoteInput, '是');
+        console.log('✅ 已填写异地运行: 是');
+    }}
+    const taskInput = await waitForElement(TASK_TYPE_INPUT_XPATH, 5000);
+    if (taskInput) {{
+        setInputValue(taskInput, plan.任务性质);
+        console.log(`📝 已填写任务性质: ${{plan.任务性质}}`);
+    }}
+    const flightNoInput = await waitForElement(FLIGHT_NO_XPATH, 5000);
+    if (flightNoInput) {{
+        setInputValue(flightNoInput, plan.飞机注册号);
+        console.log(`📝 已填写航班号/注册号: ${{plan.飞机注册号}}`);
+    }}
+    const regSpan = await waitForElement(REG_SPAN_XPATH, 5000);
+    if (regSpan) setInputValue(regSpan, plan.飞机注册号);
+    const regInput = await waitForElement(REG_INPUT_XPATH, 5000);
+    if (regInput) setInputValue(regInput, plan.飞机注册号);
+    const depInput = await waitForElement(DEP_INPUT_XPATH, 5000);
+    if (depInput) setInputValue(depInput, plan.出发地);
+    const arrInput = await waitForElement(ARR_INPUT_XPATH, 5000);
+    if (arrInput) setInputValue(arrInput, plan.到达地);
+    const depTimeInput = await waitForElement(DEP_TIME_INPUT_XPATH, 5000);
+    if (depTimeInput) setInputValue(depTimeInput, plan.计划出发_hhmm);
+    const arrTimeInput = await waitForElement(ARR_TIME_INPUT_XPATH, 5000);
+    if (arrTimeInput) setInputValue(arrTimeInput, plan.计划到达_hhmm);
+
+    await waitForModalClose();
+    return true;
+}}
+
 // ================= 主流程 =================
 (async () => {{
     console.log('🚀 开始执行备案流程...');
-
-    // 获取网页中已有的计划
     const existingPlans = getExistingPlans();
     console.log(`📋 网页中已有 ${{existingPlans.length}} 条计划`);
-
-    // 筛选需要备案的计划（未匹配）
     const toRecord = pendingPlans.filter(plan => !isPlanExists(plan, existingPlans));
     console.log(`📊 需要备案的计划数: ${{toRecord.length}}`);
-
     if (toRecord.length === 0) {{
         console.log('🎉 所有计划均已备案，无需操作。');
         return;
     }}
-
-    // 依次处理
     for (let i = 0; i < toRecord.length; i++) {{
         console.log(`\\n========== 处理第 ${{i+1}}/${{toRecord.length}} 条计划 ==========`);
         const success = await fillAndWait(toRecord[i]);
@@ -291,7 +254,6 @@ async function fillAndWait(plan) {{
         }}
         await sleep(1000);
     }}
-
     console.log('\\n🎉 所有需要备案的计划处理完毕！');
 }})();
 """
