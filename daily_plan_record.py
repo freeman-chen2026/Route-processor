@@ -64,7 +64,7 @@ if uploaded_file is not None:
 
     js_data = json.dumps(records, ensure_ascii=False, indent=2)
 
-    # 生成 JavaScript 脚本（使用用户提供的所有精确 XPath）
+    # 生成 JavaScript 脚本（使用用户提供的所有精确 XPath，并修正弹窗检测）
     script = f"""
 // ================= 自动生成的当日/次日计划备案脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -82,6 +82,9 @@ const ARR_AIRPORT_SELECTOR = 'td:nth-child(14) div'; // 落地机场
 
 // 新增按钮 XPath
 const ADD_BTN_XPATH = '/html/body/div[1]/div[2]/div/table/tbody/tr/td[1]/a[1]/span/span[2]';
+
+// 弹窗根元素 XPath（用于检测弹窗是否关闭）
+const MODAL_ROOT_XPATH = '/html/body/div[2]';
 
 // 弹窗内各字段的 XPath（用户提供）
 const AIRCRAFT_TYPE_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[2]/span/span/input';
@@ -187,12 +190,15 @@ async function fillAndWait(plan) {{
     // 3. 选择日期（点击日期选择器）
     await clickElement(DATE_PICKER_XPATH);
     await sleep(500);
-    // 直接设置日期输入框（如果存在）
+    // 尝试直接设置日期输入框（如果存在）
     const dateInput = document.querySelector('input[type="date"]');
     if (dateInput) {{
         setInputValue(dateInput, plan.出发日期); // 格式 YYYY-MM-DD
+        console.log(`📅 已设置日期: ${{plan.出发日期}}`);
     }} else {{
-        console.warn('无法自动选择日期，请手动选择');
+        console.warn('无法自动选择日期，请手动选择日期后继续');
+        // 等待用户手动选择日期（简单等待5秒）
+        await sleep(5000);
     }}
 
     // 4. 本计划航空器是否异地运行：直接填入"是"
@@ -236,11 +242,11 @@ async function fillAndWait(plan) {{
     if (arrTimeInput) setInputValue(arrTimeInput, plan.计划到达_hhmm);
 
     console.log('✅ 表单填写完成，请手动点击“保存”按钮。');
-    // 等待弹窗关闭（轮询检测弹窗容器是否消失）
+    // 等待弹窗根元素消失（用户点击保存后弹窗关闭）
     while (true) {{
         await sleep(2000);
-        const modal = document.querySelector('div[role="dialog"]');
-        if (!modal) {{
+        const modalRoot = document.evaluate(MODAL_ROOT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (!modalRoot) {{
             console.log('✅ 弹窗已关闭，继续下一条');
             break;
         }}
