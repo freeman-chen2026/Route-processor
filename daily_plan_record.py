@@ -50,9 +50,13 @@ if uploaded_file is not None:
     st.subheader("📊 待处理的计划（当日/次日）")
     st.dataframe(df_filtered[["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]])
 
+    # 准备数据供 JavaScript 使用
     records = df_filtered.to_dict(orient="records")
     for rec in records:
-        rec["出发日期_yyyymmdd"] = rec["出发日期_obj"].strftime("%Y%m%d")
+        # 删除不可 JSON 序列化的 Timestamp 字段
+        rec.pop("出发日期_obj", None)
+        # 转换日期格式为 YYYYMMDD
+        rec["出发日期_yyyymmdd"] = pd.to_datetime(rec["出发日期"]).strftime("%Y%m%d")
         rec["计划出发_hhmm"] = rec["计划出发"].replace(":", "") if isinstance(rec["计划出发"], str) else ""
         rec["计划到达_hhmm"] = rec["预计到达"].replace(":", "") if isinstance(rec["预计到达"], str) else ""
         rec["机型"] = get_aircraft_type(rec["飞机注册号"])
