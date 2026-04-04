@@ -31,7 +31,8 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
     st.success(f"文件加载成功，共 {len(df)} 条记录")
 
-    required_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途", "航班号"]
+    # 必需的列（航班号可选，但保留用于显示）
+    required_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
     missing = [col for col in required_cols if col not in df.columns]
     if missing:
         st.error(f"Excel 缺少以下列: {missing}")
@@ -48,7 +49,11 @@ if uploaded_file is not None:
 
     st.info(f"共筛选出 {len(df_filtered)} 条当日/次日计划（今日: {(df_filtered['出发日期_obj'].dt.date == today).sum()}, 明日: {(df_filtered['出发日期_obj'].dt.date == tomorrow).sum()}）")
     st.subheader("📊 待处理的计划（当日/次日）")
-    st.dataframe(df_filtered[["出发日期", "航班号", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]])
+    # 显示时包含航班号（如果有）
+    display_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
+    if "航班号" in df.columns:
+        display_cols.insert(1, "航班号")
+    st.dataframe(df_filtered[display_cols])
 
     # 准备数据供 JavaScript 使用
     records = df_filtered.to_dict(orient="records")
@@ -64,7 +69,7 @@ if uploaded_file is not None:
 
     js_data = json.dumps(records, ensure_ascii=False, indent=2)
 
-    # 生成 JavaScript 脚本（修正日期输入和航班号）
+    # 生成 JavaScript 脚本（航班号输入框填写注册号）
     script = f"""
 // ================= 自动生成的当日/次日计划备案脚本 =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -86,12 +91,12 @@ const ADD_BTN_XPATH = '/html/body/div[1]/div[2]/div/table/tbody/tr/td[1]/a[1]/sp
 // 弹窗根元素 XPath（用于检测弹窗是否关闭）
 const MODAL_ROOT_XPATH = '/html/body/div[2]';
 
-// 弹窗内各字段的 XPath（用户提供，已修正）
+// 弹窗内各字段的 XPath（用户提供）
 const AIRCRAFT_TYPE_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[2]/span/span/input';
 const DATE_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/input';  // 直接输入日期
 const REMOTE_RUN_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[6]/span/span/input';
 const TASK_TYPE_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[6]/span/span/input';
-const FLIGHT_NO_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span/span/input';  // 航班号输入框
+const FLIGHT_NO_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span/span/input';  // 航班号输入框（实际填写注册号）
 const REG_SPAN_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span';  // 注册号显示（已废弃？保留兼容）
 const REG_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[10]/span/span/input';
 const DEP_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[2]/span/span/input';
@@ -173,7 +178,7 @@ function isPlanExists(plan, existingPlans) {{
 
 // 填写弹窗内的表单（等待用户手动点击“保存”）
 async function fillAndWait(plan) {{
-    console.log(`\\n🔧 开始备案计划：${{plan.航班号}} ${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
+    console.log(`\\n🔧 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
 
     // 1. 点击“新增”
     if (!(await clickElement(ADD_BTN_XPATH))) return false;
@@ -191,7 +196,6 @@ async function fillAndWait(plan) {{
     // 3. 填写日期（直接输入框）
     const dateInput = await waitForElement(DATE_INPUT_XPATH, 10000);
     if (dateInput) {{
-        // 日期格式：YYYY-MM-DD
         setInputValue(dateInput, plan.出发日期);
         console.log(`📅 已填写日期: ${{plan.出发日期}}`);
     }} else {{
@@ -216,11 +220,11 @@ async function fillAndWait(plan) {{
         console.warn('未找到任务性质输入框，请手动填写');
     }}
 
-    // 6. 填写航班号
+    // 6. 填写航班号（实际填写飞机注册号）
     const flightNoInput = await waitForElement(FLIGHT_NO_XPATH, 5000);
     if (flightNoInput) {{
-        setInputValue(flightNoInput, plan.航班号);
-        console.log(`📝 已填写航班号: ${{plan.航班号}}`);
+        setInputValue(flightNoInput, plan.飞机注册号);
+        console.log(`📝 已填写航班号/注册号: ${{plan.飞机注册号}}`);
     }} else {{
         console.warn('未找到航班号输入框，请手动填写');
     }}
