@@ -162,17 +162,19 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def extract_country(city_name):
-    # 1. 先尝试完整匹配国家名
-    for country in COUNTRIES:
-        if country in city_name:
-            return country
-    # 2. 再尝试通过缩写映射
+    # 1. 先尝试通过缩写映射（优先级高）
     parts = re.split(r'[\s\-]', city_name)
     if parts:
         first_part = parts[0]
         if first_part in ABBR_TO_COUNTRY:
             return ABBR_TO_COUNTRY[first_part]
-        return first_part
+    # 2. 再尝试完整匹配国家名
+    for country in COUNTRIES:
+        if country in city_name:
+            return country
+    # 3. 否则返回第一个词
+    if parts:
+        return parts[0]
     return city_name
 
 def get_province_from_city(city):
@@ -214,6 +216,7 @@ def build_city_mappings(df, custom_detail_map):
             detail_map[city] = {"province": province, "district": district}
             city_map[city] = province
         else:
+            # 境外城市：使用标准化后的国家名称
             country = extract_country(city)
             city_map[city] = country
 
