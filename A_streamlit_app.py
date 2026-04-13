@@ -200,38 +200,19 @@ def build_city_mappings(df, custom_detail_map):
 
     return city_map, detail_map
 
-def generate_daily_script(records, city_map_json, detail_map_json, domestic_keywords_json):
-    js_data = json.dumps(records, ensure_ascii=False, indent=4)
-    script = f"""
-// ================= 自动生成的飞行计划脚本（当日计划） =================
+def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json):
+    """生成公共辅助函数脚本，供当日和次日计划共用"""
+    return f"""
+// ================= 公共辅助函数（基础脚本） =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-// 当日待处理计划数: {len(records)}
 // =========================================================
 
-// ================= 配置区 =================
-const IFRAME_ID = 'main';
-const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
-const REG_SELECTOR = 'td:nth-child(6) div';
-const SEGMENT_SELECTOR = 'td:nth-child(7) div';
-const DATE_SELECTOR = 'td:nth-child(9)';
-
-const excelData = {js_data};
-
-// ================= 辅助函数 =================
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
-function normalizeReg(reg) {{
-    return reg.replace(/[-\s]/g, '').trim();
-}}
-
-function getPlanKey(plan) {{
-    return `${{plan["飞机注册号"]}}_${{plan["出发日期"]}}_${{plan["出发城市"]}}_${{plan["到达城市"]}}`;
-}}
-
 async function getMainDoc() {{
-    const iframe = document.querySelector('#' + IFRAME_ID);
+    const iframe = document.querySelector('#main');
     if (!iframe) {{
-        console.error('未找到 iframe #' + IFRAME_ID);
+        console.error('未找到 iframe #main');
         return null;
     }}
     let doc = iframe.contentDocument;
@@ -240,69 +221,6 @@ async function getMainDoc() {{
         doc = iframe.contentDocument;
     }}
     return doc;
-}}
-
-async function waitForTable() {{
-    const start = Date.now();
-    while (Date.now() - start < 10000) {{
-        const doc = await getMainDoc();
-        if (!doc) return null;
-        const rows = doc.querySelectorAll(ROW_SELECTOR);
-        if (rows.length > 0) return rows;
-        await sleep(300);
-    }}
-    return null;
-}}
-
-async function getFirstMatch(processedKeys) {{
-    const rows = await waitForTable();
-    if (!rows) return null;
-    console.log(`📋 找到 ${{rows.length}} 个计划行，开始匹配...`);
-    for (let i = 0; i < rows.length; i++) {{
-        const row = rows[i];
-        const regEl = row.querySelector(REG_SELECTOR);
-        const regNo = regEl ? normalizeReg(regEl.innerText.trim()) : null;
-        if (!regNo) continue;
-        const dateCell = row.querySelector(DATE_SELECTOR);
-        const webDate = dateCell ? dateCell.innerText.trim() : '';
-        const segEl = row.querySelector(SEGMENT_SELECTOR);
-        if (!segEl) continue;
-        const segText = segEl.innerText.trim();
-        const parts = segText.split(',');
-        if (parts.length < 2) continue;
-        const depPart = parts[0].trim();
-        const arrPart = parts[1].trim();
-        const extract = (part) => {{
-            let afterPrefix = part.replace(/^(境内|境外)-/, '');
-            const segments = afterPrefix.split('-');
-            const keywords = [];
-            for (let seg of segments) {{
-                const words = seg.split(/\\s+/);
-                for (let w of words) if (w) keywords.push(w);
-            }}
-            return keywords;
-        }};
-        const depKeywords = extract(depPart);
-        const arrKeywords = extract(arrPart);
-        console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，日期 ${{webDate}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
-
-        for (let r of excelData) {{
-            const key = getPlanKey(r);
-            if (processedKeys.has(key)) continue;
-
-            const regMatch = normalizeReg(r["飞机注册号"]) === regNo;
-            const depMatch = depKeywords.some(kw => (r["出发城市"] || "").includes(kw));
-            const arrMatch = arrKeywords.some(kw => (r["到达城市"] || "").includes(kw));
-            const dateMatch = r["出发日期"] === webDate;
-
-            if (regMatch && depMatch && arrMatch && dateMatch) {{
-                console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}，计划 key: ${{key}}`);
-                return {{ row, matchedExcel: r, planKey: key }};
-            }}
-        }}
-    }}
-    console.log('❌ 没有找到任何匹配的计划');
-    return null;
 }}
 
 // 修改 waitForElement 函数，默认按 XPath 处理，支持 CSS 选择器通过第三个参数 false
@@ -377,6 +295,94 @@ function getLocationInfo(city) {{
         if (!country) {{ const parts = city.split(/[\\s\\-]/); country = parts[0]; }}
         return {{ zone: "境外", region: country }};
     }}
+}}
+"""
+
+def generate_daily_script(records, city_map_json, detail_map_json, domestic_keywords_json):
+    js_data = json.dumps(records, ensure_ascii=False, indent=4)
+    script = f"""
+// ================= 自动生成的飞行计划脚本（当日计划专用） =================
+// 当日待处理计划数: {len(records)}
+// =========================================================
+
+// ================= 配置区 =================
+const IFRAME_ID = 'main';
+const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
+const REG_SELECTOR = 'td:nth-child(6) div';
+const SEGMENT_SELECTOR = 'td:nth-child(7) div';
+const DATE_SELECTOR = 'td:nth-child(9)';
+
+const excelData = {js_data};
+
+function normalizeReg(reg) {{
+    return reg.replace(/[-\s]/g, '').trim();
+}}
+
+function getPlanKey(plan) {{
+    return `${{plan["飞机注册号"]}}_${{plan["出发日期"]}}_${{plan["出发城市"]}}_${{plan["到达城市"]}}`;
+}}
+
+async function waitForTable() {{
+    const start = Date.now();
+    while (Date.now() - start < 10000) {{
+        const doc = await getMainDoc();
+        if (!doc) return null;
+        const rows = doc.querySelectorAll(ROW_SELECTOR);
+        if (rows.length > 0) return rows;
+        await sleep(300);
+    }}
+    return null;
+}}
+
+async function getFirstMatch(processedKeys) {{
+    const rows = await waitForTable();
+    if (!rows) return null;
+    console.log(`📋 找到 ${{rows.length}} 个计划行，开始匹配...`);
+    for (let i = 0; i < rows.length; i++) {{
+        const row = rows[i];
+        const regEl = row.querySelector(REG_SELECTOR);
+        const regNo = regEl ? normalizeReg(regEl.innerText.trim()) : null;
+        if (!regNo) continue;
+        const dateCell = row.querySelector(DATE_SELECTOR);
+        const webDate = dateCell ? dateCell.innerText.trim() : '';
+        const segEl = row.querySelector(SEGMENT_SELECTOR);
+        if (!segEl) continue;
+        const segText = segEl.innerText.trim();
+        const parts = segText.split(',');
+        if (parts.length < 2) continue;
+        const depPart = parts[0].trim();
+        const arrPart = parts[1].trim();
+        const extract = (part) => {{
+            let afterPrefix = part.replace(/^(境内|境外)-/, '');
+            const segments = afterPrefix.split('-');
+            const keywords = [];
+            for (let seg of segments) {{
+                const words = seg.split(/\\s+/);
+                for (let w of words) if (w) keywords.push(w);
+            }}
+            return keywords;
+        }};
+        const depKeywords = extract(depPart);
+        const arrKeywords = extract(arrPart);
+        console.log(`🔍 第 ${{i+1}} 行：机号 ${{regNo}}，日期 ${{webDate}}，出发关键词: [${{depKeywords.join(", ")}}]，到达关键词: [${{arrKeywords.join(", ")}}]`);
+
+        for (let r of excelData) {{
+            const key = getPlanKey(r);
+            if (processedKeys.has(key)) continue;
+
+            const regMatch = normalizeReg(r["飞机注册号"]) === regNo;
+            const depMatch = depKeywords.some(kw => (r["出发城市"] || "").includes(kw));
+            const arrMatch = arrKeywords.some(kw => (r["到达城市"] || "").includes(kw));
+            const dateMatch = r["出发日期"] === webDate;
+
+            if (regMatch && depMatch && arrMatch && dateMatch) {{
+                console.log(`✅ 匹配成功：第 ${{i+1}} 行，机号 ${{regNo}}，日期 ${{webDate}}，计划 key: ${{key}}`);
+                return {{ row, matchedExcel: r, planKey: key }};
+            }}
+        }}
+    }}
+    console.log('❌ 没有找到任何匹配的计划');
+    return null;
 }}
 
 async function handleAirportBlock(blockIndex, city, label) {{
@@ -596,36 +602,9 @@ async function runDailyPlans() {{
 def generate_nextday_script(records, city_map_json, detail_map_json, domestic_keywords_json):
     flight_records_json = json.dumps(records, ensure_ascii=False, indent=4)
     template = f"""
-// ================= 自动生成的飞行计划脚本（次日计划备案） =================
-// 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+// ================= 自动生成的飞行计划脚本（次日计划专用） =================
 // 次日待处理计划数: {len(records)}
 // =========================================================
-
-const getCurrentDoc = getMainDoc;
-
-// 次日计划专用函数（与当日脚本中的 ensureListPage 同名，但无妨）
-async function ensureListPage() {{
-    // 注意：这里也使用 CSS 选择器，需传递 false
-    const btn = await waitForElement('input.query.yuanjiao', 15000, false);
-    if (btn) return true;
-    console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
-    const doc = await getCurrentDoc();
-    let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (closeBtn) {{
-        closeBtn.click();
-        console.log('已点击关闭按钮，等待返回列表页');
-        await sleep(1000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 10000, false);
-        return backBtn !== null;
-    }} else {{
-        console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
-        await sleep(5000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 5000, false);
-        return backBtn !== null;
-    }}
-}}
 
 const CITY_DETAIL_MAP = {detail_map_json};
 
@@ -774,7 +753,7 @@ async function selectAircraft(reg) {{
         console.warn('未找到飞机选择对话框');
         return false;
     }}
-    const doc = await getCurrentDoc();
+    const doc = await getMainDoc();
     
     let span = doc.evaluate(`//span[text()='${{regForSelect}}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!span) {{
@@ -825,7 +804,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {{
         if (!btn) btn = document.evaluate('//button[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         if (btn) return btn;
         try {{
-            const doc = await getCurrentDoc();
+            const doc = await getMainDoc();
             btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (btn) return btn;
@@ -864,7 +843,7 @@ async function processNextDayRecord(record) {{
         return false;
     }}
 
-    const doc = await getCurrentDoc();
+    const doc = await getMainDoc();
     const specialSelect = doc.querySelector('#specialf');
     if (specialSelect) await setSelectValue(specialSelect, "否");
     else console.warn('未找到是否特殊任务飞行 select');
@@ -1064,13 +1043,16 @@ if uploaded_file is not None:
                         "flight_minutes": minutes
                     })
 
-                # 生成当日脚本（包含所有辅助函数和当日流程）
+                # 生成基础脚本（公共辅助函数）
+                base_script = generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
+
+                # 生成当日脚本（专用函数）
                 daily_script = generate_daily_script(daily_records, city_map_json, detail_map_json, domestic_keywords_json) if len(daily_records) > 0 else ""
-                # 生成次日脚本
+                # 生成次日脚本（专用函数）
                 nextday_script = generate_nextday_script(nextday_records, city_map_json, detail_map_json, domestic_keywords_json) if len(nextday_records) > 0 else ""
 
                 # 组合最终脚本
-                final_script = daily_script + "\n\n" + nextday_script + """
+                final_script = base_script + "\n\n" + daily_script + "\n\n" + nextday_script + """
 // ================= 主入口：先执行当日计划，再执行次日计划 =================
 (async () => {
     console.log("========== 开始执行综合流程 ==========");
