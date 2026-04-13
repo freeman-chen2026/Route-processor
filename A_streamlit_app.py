@@ -335,7 +335,6 @@ function getLocationInfo(city) {{
 """
 
 def generate_daily_script(records, city_map_json, detail_map_json, domestic_keywords_json):
-    """生成当日计划脚本：对于每条有实际到达时间的记录，先尝试匹配网页上的计划行，匹配成功则执行表单填写，匹配失败则执行新增备案（使用当日数据）"""
     js_data = json.dumps(records, ensure_ascii=False, indent=4)
     script = f"""
 // ================= 自动生成的飞行计划脚本（当日计划专用） =================
@@ -623,19 +622,19 @@ async function processNewPlan(plan) {{
         }}
         console.log('等待返回列表页...');
         await waitForElement('input.query.yuanjiao', 15000, false);
-        console.log(`处理完成：${{plan["飞机注册号"]}}`);
+        console.log(`新增备案完成：${{plan["飞机注册号"]}}`);
     }} else {{
         console.warn('未找到提交按钮');
+        return false;
     }}
     await sleep(2000);
     return true;
 }}
 
-// 当日计划主流程：遍历所有当日记录，先尝试匹配，匹配成功则执行填写，否则执行新增备案
+// 当日计划主流程：遍历所有当日记录，先尝试匹配，匹配成功则执行填写，否则先新增备案，再执行填写
 async function runDailyPlans() {{
     console.log('🚀 开始执行当日计划自动化流程...');
     let processedCount = 0;
-    // 记录已处理过的计划 key（防止重复）
     const processedKeys = new Set();
 
     for (let plan of excelData) {{
@@ -646,14 +645,29 @@ async function runDailyPlans() {{
         console.log(`\\n========== 处理第 ${{processedCount}} 个当日计划 ==========`);
 
         // 尝试匹配网页上的计划行
-        const matchedRow = await tryMatchPlan(plan);
+        let matchedRow = await tryMatchPlan(plan);
         let success = false;
         if (matchedRow) {{
-            console.log(`✅ 匹配到已有航段，执行表单填写`);
+            console.log(`✅ 匹配到已有航段，直接执行表单填写`);
             success = await processExistingPlan(matchedRow, plan);
         }} else {{
-            console.log(`⚠️ 未匹配到已有航段，执行新增备案`);
-            success = await processNewPlan(plan);
+            console.log(`⚠️ 未匹配到已有航段，先执行新增备案，再执行表单填写`);
+            // 先新增备案（添加经营活动信息）
+            const addSuccess = await processNewPlan(plan);
+            if (!addSuccess) {{
+                console.error(`新增备案失败，跳过该计划`);
+                continue;
+            }}
+            // 等待列表页刷新，重新匹配刚添加的记录
+            await sleep(3000); // 额外等待确保新记录加载
+            matchedRow = await tryMatchPlan(plan);
+            if (matchedRow) {{
+                console.log(`✅ 新增备案成功，现在执行表单填写`);
+                success = await processExistingPlan(matchedRow, plan);
+            }} else {{
+                console.error(`❌ 新增备案后仍未匹配到记录，可能添加失败，跳过`);
+                success = false;
+            }}
         }}
         if (!success) {{
             console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
@@ -1115,7 +1129,7 @@ if uploaded_file is not None:
                 # 生成基础脚本（公共辅助函数）
                 base_script = generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
 
-                # 生成当日脚本（专用函数，包含匹配+执行/新增逻辑）
+                # 生成当日脚本（专用函数）
                 daily_script = generate_daily_script(daily_records, city_map_json, detail_map_json, domestic_keywords_json) if len(daily_records) > 0 else ""
                 # 生成次日脚本（专用函数）
                 nextday_script = generate_nextday_script(nextday_records, city_map_json, detail_map_json, domestic_keywords_json) if len(nextday_records) > 0 else ""
