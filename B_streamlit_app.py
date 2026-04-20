@@ -1,824 +1,436 @@
-# streamlit_app.py
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Streamlit应用：上传Excel飞行计划，生成Selenium自动化脚本
+该脚本可自动在目标网页（如航班计划系统）中填写多架飞机的飞行计划。
+"""
+
 import streamlit as st
 import pandas as pd
-import json
-import re
-from datetime import datetime, date, timedelta
+import io
+from datetime import datetime
 
-# ---------- 内置国家名称列表（用于智能识别境外城市） ----------
-COUNTRIES = [
-    "香港", "澳门", "台湾", "蒙古", "朝鲜", "韩国", "日本", "菲律宾", "越南", "老挝",
-    "柬埔寨", "缅甸", "泰国", "马来西亚", "文莱", "新加坡", "印度尼西亚", "东帝汶",
-    "尼泊尔", "不丹", "孟加拉国", "印度", "巴基斯坦", "斯里兰卡", "马尔代夫",
-    "哈萨克斯坦", "吉尔吉斯斯坦", "塔吉克斯坦", "乌兹别克斯坦", "土库曼斯坦",
-    "阿富汗", "伊拉克", "伊朗", "叙利亚", "约旦", "黎巴嫩", "以色列", "巴勒斯坦",
-    "沙特阿拉伯", "巴林", "卡塔尔", "科威特", "阿联酋", "阿曼", "也门", "格鲁吉亚",
-    "亚美尼亚", "阿塞拜疆", "土耳其", "塞浦路斯", "芬兰", "瑞典", "挪威", "冰岛",
-    "丹麦", "法罗群岛", "爱沙尼亚", "拉脱维亚", "立陶宛", "白俄罗斯", "俄罗斯",
-    "乌克兰", "摩尔多瓦", "波兰", "捷克", "斯洛伐克", "匈牙利", "德国", "奥地利",
-    "瑞士", "列支敦士登", "英国", "爱尔兰", "荷兰", "比利时", "卢森堡", "法国",
-    "摩纳哥", "罗马尼亚", "保加利亚", "塞尔维亚", "马其顿", "阿尔巴尼亚", "希腊",
-    "斯洛文尼亚", "克罗地亚", "波斯尼亚和墨塞哥维那", "意大利", "梵蒂冈", "圣马力诺",
-    "马耳他", "西班牙", "葡萄牙", "安道尔", "埃及", "利比亚", "苏丹", "突尼斯",
-    "阿尔及利亚", "摩洛哥", "毛里塔尼亚", "塞内加尔", "冈比亚", "马里", "布基纳法索",
-    "几内亚", "几内亚比绍", "佛得角", "塞拉利昂", "利比里亚", "科特迪瓦", "加纳",
-    "多哥", "贝宁", "尼日尔", "尼日利亚", "喀麦隆", "赤道几内亚", "乍得", "中非",
-    "苏丹", "埃塞俄比亚", "吉布提", "索马里", "肯尼亚", "乌干达", "坦桑尼亚",
-    "卢旺达", "布隆迪", "莫桑比克", "马达加斯加", "科摩罗", "毛里求斯", "塞舌尔",
-    "纳米比亚", "博茨瓦纳", "津巴布韦", "赞比亚", "马拉维", "南非", "斯威士兰",
-    "莱索托", "澳大利亚", "新西兰", "巴布亚新几内亚", "所罗门群岛", "瓦努阿图",
-    "斐济", "萨摩亚", "汤加", "密克罗尼西亚", "马绍尔群岛", "帕劳", "瑙鲁", "基里巴斯",
-    "图瓦卢", "美国", "加拿大", "墨西哥", "危地马拉", "伯利兹", "萨尔瓦多", "洪都拉斯",
-    "尼加拉瓜", "哥斯达黎加", "巴拿马", "古巴", "牙买加", "海地", "多米尼加",
-    "波多黎各", "巴哈马", "特立尼达和多巴哥", "巴巴多斯", "圣卢西亚", "圣文森特和格林纳丁斯",
-    "格林纳达", "安提瓜和巴布达", "多米尼克", "圣基茨和尼维斯", "哥伦比亚", "委内瑞拉",
-    "圭亚那", "苏里南", "厄瓜多尔", "秘鲁", "巴西", "玻利维亚", "巴拉圭", "智利",
-    "阿根廷", "乌拉圭"
-]
+# 页面配置
+st.set_page_config(
+    page_title="飞行计划自动化脚本生成器",
+    page_icon="✈️",
+    layout="wide"
+)
 
-# 中国境内城市到省份的自动映射表（覆盖所有地级市及常见城市名）
-CITY_TO_PROVINCE = {
-    # 直辖市
-    "北京": "北京", "上海": "上海", "天津": "天津", "重庆": "重庆",
-    # 广东
-    "广州": "广东", "深圳": "广东", "珠海": "广东", "汕头": "广东", "佛山": "广东", "江门": "广东",
-    "湛江": "广东", "茂名": "广东", "肇庆": "广东", "惠州": "广东", "梅州": "广东", "汕尾": "广东",
-    "河源": "广东", "阳江": "广东", "清远": "广东", "东莞": "广东", "中山": "广东", "潮州": "广东",
-    "揭阳": "广东", "云浮": "广东",
-    # 江苏
-    "南京": "江苏", "无锡": "江苏", "徐州": "江苏", "常州": "江苏", "苏州": "江苏", "南通": "江苏",
-    "连云港": "江苏", "淮安": "江苏", "盐城": "江苏", "扬州": "江苏", "镇江": "江苏", "泰州": "江苏",
-    "宿迁": "江苏",
-    # 浙江
-    "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "嘉兴": "浙江", "湖州": "浙江", "绍兴": "浙江",
-    "金华": "浙江", "衢州": "浙江", "舟山": "浙江", "台州": "浙江", "丽水": "浙江",
-    # 安徽
-    "合肥": "安徽", "芜湖": "安徽", "蚌埠": "安徽", "淮南": "安徽", "马鞍山": "安徽", "淮北": "安徽",
-    "铜陵": "安徽", "安庆": "安徽", "黄山": "安徽", "滁州": "安徽", "阜阳": "安徽", "宿州": "安徽",
-    "六安": "安徽", "亳州": "安徽", "池州": "安徽", "宣城": "安徽",
-    # 福建
-    "福州": "福建", "厦门": "福建", "莆田": "福建", "三明": "福建", "泉州": "福建", "漳州": "福建",
-    "南平": "福建", "龙岩": "福建", "宁德": "福建",
-    # 江西
-    "南昌": "江西", "景德镇": "江西", "萍乡": "江西", "九江": "江西", "新余": "江西", "鹰潭": "江西",
-    "赣州": "江西", "吉安": "江西", "宜春": "江西", "抚州": "江西", "上饶": "江西",
-    # 山东
-    "济南": "山东", "青岛": "山东", "淄博": "山东", "枣庄": "山东", "东营": "山东", "烟台": "山东",
-    "潍坊": "山东", "济宁": "山东", "泰安": "山东", "威海": "山东", "日照": "山东", "临沂": "山东",
-    "德州": "山东", "聊城": "山东", "滨州": "山东", "菏泽": "山东",
-    # 河南
-    "郑州": "河南", "开封": "河南", "洛阳": "河南", "平顶山": "河南", "安阳": "河南", "鹤壁": "河南",
-    "新乡": "河南", "焦作": "河南", "濮阳": "河南", "许昌": "河南", "漯河": "河南", "三门峡": "河南",
-    "南阳": "河南", "商丘": "河南", "信阳": "河南", "周口": "河南", "驻马店": "河南",
-    # 湖北
-    "武汉": "湖北", "黄石": "湖北", "十堰": "湖北", "宜昌": "湖北", "襄阳": "湖北", "鄂州": "湖北",
-    "荆门": "湖北", "孝感": "湖北", "荆州": "湖北", "黄冈": "湖北", "咸宁": "湖北", "随州": "湖北",
-    # 湖南
-    "长沙": "湖南", "株洲": "湖南", "湘潭": "湖南", "衡阳": "湖南", "邵阳": "湖南", "岳阳": "湖南",
-    "常德": "湖南", "张家界": "湖南", "益阳": "湖南", "郴州": "湖南", "永州": "湖南", "怀化": "湖南",
-    "娄底": "湖南",
-    # 四川
-    "成都": "四川", "自贡": "四川", "攀枝花": "四川", "泸州": "四川", "德阳": "四川", "绵阳": "四川",
-    "广元": "四川", "遂宁": "四川", "内江": "四川", "乐山": "四川", "南充": "四川", "眉山": "四川",
-    "宜宾": "四川", "广安": "四川", "达州": "四川", "雅安": "四川", "巴中": "四川", "资阳": "四川",
-    # 贵州
-    "贵阳": "贵州", "六盘水": "贵州", "遵义": "贵州", "安顺": "贵州", "毕节": "贵州", "铜仁": "贵州",
-    # 云南
-    "昆明": "云南", "曲靖": "云南", "玉溪": "云南", "保山": "云南", "昭通": "云南", "丽江": "云南",
-    "普洱": "云南", "临沧": "云南",
-    # 陕西
-    "西安": "陕西", "铜川": "陕西", "宝鸡": "陕西", "咸阳": "陕西", "渭南": "陕西", "延安": "陕西",
-    "汉中": "陕西", "榆林": "陕西", "安康": "陕西", "商洛": "陕西",
-    # 甘肃
-    "兰州": "甘肃", "嘉峪关": "甘肃", "金昌": "甘肃", "白银": "甘肃", "天水": "甘肃", "武威": "甘肃",
-    "张掖": "甘肃", "平凉": "甘肃", "酒泉": "甘肃", "庆阳": "甘肃", "定西": "甘肃", "陇南": "甘肃",
-    # 青海
-    "西宁": "青海", "海东": "青海",
-    # 宁夏
-    "银川": "宁夏", "石嘴山": "宁夏", "吴忠": "宁夏", "固原": "宁夏", "中卫": "宁夏",
-    # 新疆
-    "乌鲁木齐": "新疆", "克拉玛依": "新疆", "吐鲁番": "新疆", "哈密": "新疆",
-    # 西藏
-    "拉萨": "西藏", "日喀则": "西藏", "昌都": "西藏", "林芝": "西藏", "山南": "西藏", "那曲": "西藏",
-    # 内蒙古
-    "呼和浩特": "内蒙古", "包头": "内蒙古", "乌海": "内蒙古", "赤峰": "内蒙古", "通辽": "内蒙古",
-    "鄂尔多斯": "内蒙古", "呼伦贝尔": "内蒙古", "巴彦淖尔": "内蒙古", "乌兰察布": "内蒙古",
-    # 广西
-    "南宁": "广西", "柳州": "广西", "桂林": "广西", "梧州": "广西", "北海": "广西", "防城港": "广西",
-    "钦州": "广西", "贵港": "广西", "玉林": "广西", "百色": "广西", "贺州": "广西", "河池": "广西",
-    "来宾": "广西", "崇左": "广西",
-    # 海南
-    "海口": "海南", "三亚": "海南", "三沙": "海南", "儋州": "海南",
-    # 河北
-    "石家庄": "河北", "唐山": "河北", "秦皇岛": "河北", "邯郸": "河北", "邢台": "河北", "保定": "河北",
-    "张家口": "河北", "承德": "河北", "沧州": "河北", "廊坊": "河北", "衡水": "河北",
-    # 山西
-    "太原": "山西", "大同": "山西", "阳泉": "山西", "长治": "山西", "晋城": "山西", "朔州": "山西",
-    "晋中": "山西", "运城": "山西", "忻州": "山西", "临汾": "山西", "吕梁": "山西",
-    # 辽宁
-    "沈阳": "辽宁", "大连": "辽宁", "鞍山": "辽宁", "抚顺": "辽宁", "本溪": "辽宁", "丹东": "辽宁",
-    "锦州": "辽宁", "营口": "辽宁", "阜新": "辽宁", "辽阳": "辽宁", "盘锦": "辽宁", "铁岭": "辽宁",
-    "朝阳": "辽宁", "葫芦岛": "辽宁",
-    # 吉林
-    "长春": "吉林", "吉林": "吉林", "四平": "吉林", "辽源": "吉林", "通化": "吉林", "白山": "吉林",
-    "松原": "吉林", "白城": "吉林",
-    # 黑龙江
-    "哈尔滨": "黑龙江", "齐齐哈尔": "黑龙江", "鸡西": "黑龙江", "鹤岗": "黑龙江", "双鸭山": "黑龙江",
-    "大庆": "黑龙江", "伊春": "黑龙江", "佳木斯": "黑龙江", "七台河": "黑龙江", "牡丹江": "黑龙江",
-    "黑河": "黑龙江", "绥化": "黑龙江",
+# 标题与说明
+st.title("✈️ 飞行计划自动化脚本生成器")
+st.markdown("""
+### 功能说明
+1. 上传包含飞行计划的Excel文件。
+2. 系统解析数据，并按飞机注册号分组。
+3. 生成一个Python自动化脚本（使用Selenium），该脚本可以：
+   - 自动打开目标网页
+   - 根据Excel内容逐架飞机、逐条计划填写表单
+   - 支持同一架飞机的多条计划（自动增行）
+   - 每完成一架飞机后等待用户确认，再继续下一架
+4. 下载生成的脚本，在本地运行（需安装Python和Selenium）。
+""")
+
+# 侧边栏：配置目标网页URL
+st.sidebar.header("⚙️ 配置目标网页")
+target_url = st.sidebar.text_input(
+    "请输入目标网页的完整URL",
+    value="https://example.com/flight-plan",
+    help="脚本将自动打开此URL并进行填写操作"
+)
+
+st.sidebar.markdown("---")
+st.sidebar.info(
+    "**使用前准备**\n\n"
+    "1. 安装Python环境\n"
+    "2. 安装依赖：`pip install selenium pandas openpyxl`\n"
+    "3. 下载并配置浏览器驱动（Chrome需chromedriver，或使用webdriver-manager）\n"
+    "4. 运行生成的脚本：`python flight_auto.py`"
+)
+
+# 主区域：文件上传
+uploaded_file = st.file_uploader(
+    "📂 上传Excel文件（.xlsx 或 .xls）",
+    type=["xlsx", "xls"],
+    help="Excel必须包含以下列：飞机注册号, 出发地, 到达地, 用途, 计划出发, 预计到达。\n"
+         "或者包含：出发日期, 计划出发时间, 预计到达日期, 预计到达时间。"
+)
+
+# 定义期望的列名映射（支持多种命名方式）
+COLUMN_MAPPING = {
+    "aircraft_reg": ["飞机注册号", "注册号", "机号", "Aircraft Reg", "Registration"],
+    "departure": ["出发地", "起飞机场", "Dep", "Departure"],
+    "arrival": ["到达地", "目的机场", "Arr", "Arrival"],
+    "purpose": ["用途", "任务类型", "Purpose", "Flight Type"],
+    "planned_dep": ["计划出发", "计划起飞时间", "Planned Departure", "Off-block Time"],
+    "planned_arr": ["预计到达", "计划到达时间", "Planned Arrival", "On-block Time"],
+    # 备选拆分列
+    "dep_date": ["出发日期", "日期", "Flight Date"],
+    "dep_time": ["计划出发时间", "起飞时间", "Departure Time"],
+    "arr_date": ["到达日期", "预计到达日期", "Arrival Date"],
+    "arr_time": ["预计到达时间", "到达时间", "Arrival Time"],
 }
 
-# 中国境内城市关键词（用于判断境内/境外，自动生成）
-DOMESTIC_KEYWORDS = list(CITY_TO_PROVINCE.keys())
+def detect_columns(df):
+    """检测Excel中的列名，返回标准化的列名映射字典"""
+    cols = df.columns.str.lower().str.strip()
+    detected = {}
+    
+    # 尝试检测合并的日期时间列
+    for std_name, possible_names in COLUMN_MAPPING.items():
+        for name in possible_names:
+            matches = [c for c in cols if name.lower() in c]
+            if matches:
+                detected[std_name] = matches[0]
+                break
+    
+    # 如果缺少计划出发/到达，尝试从拆分列组合
+    if "planned_dep" not in detected and "dep_date" in detected and "dep_time" in detected:
+        detected["planned_dep"] = "combined_dep"
+    if "planned_arr" not in detected and "arr_date" in detected and "arr_time" in detected:
+        detected["planned_arr"] = "combined_arr"
+    
+    return detected
 
-# 默认境内机场详细映射（用于需要精确区县的特殊情况，如北京首都需选顺义区）
-# 这些会覆盖自动提取的区县，如需自动识别可留空或删除
-DEFAULT_DETAIL_MAP = {
-    "北京首都": {"province": "北京", "district": "顺义区"},
-    "北京大兴": {"province": "北京", "district": "大兴区"},
-    "天津滨海": {"province": "天津", "district": "滨海新区"},
-    "上海虹桥": {"province": "上海", "district": "闵行区"},
-    "上海浦东": {"province": "上海", "district": "浦东新区"},
-    "重庆江北": {"province": "重庆", "district": "江北区"},
-}
-
-def parse_flight_time(time_str):
-    try:
-        parts = time_str.split(':')
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        return hours, minutes
-    except:
-        return 0, 0
-
-def extract_country(city_name):
-    for country in COUNTRIES:
-        if country in city_name:
-            return country
-    parts = re.split(r'[\s\-]', city_name)
-    if parts:
-        return parts[0]
-    return city_name
-
-def get_province_from_city(city):
-    for keyword, province in CITY_TO_PROVINCE.items():
-        if keyword in city:
-            return province
-    return city.split()[0] if city.split() else city
-
-def extract_district_from_city(city):
-    """从城市名中提取区县名：优先匹配CITY_TO_PROVINCE中的关键词，取第一个匹配的关键词"""
-    for keyword in CITY_TO_PROVINCE.keys():
-        if keyword in city:
-            return keyword
-    # 未匹配到，取第一个词并去掉“机场”后缀
-    district = city.split()[0] if city.split() else city
-    if district.endswith('机场'):
-        district = district[:-2]
-    return district
-
-def build_city_mappings(df, custom_detail_map):
-    cities = set()
-    for _, row in df.iterrows():
-        dep = str(row["出发城市"]).strip()
-        arr = str(row["到达城市"]).strip()
-        cities.add(dep)
-        cities.add(arr)
-
-    detail_map = {**DEFAULT_DETAIL_MAP, **custom_detail_map}
-    city_map = {}
-
-    for city in cities:
-        # 如果已存在详细映射，直接使用
-        if city in detail_map:
-            province = detail_map[city]["province"]
-            district = detail_map[city]["district"]
-            city_map[city] = province
-            continue
-
-        # 判断境内
-        is_domestic = any(kw in city for kw in DOMESTIC_KEYWORDS)
-        if is_domestic:
-            province = get_province_from_city(city)
-            district = extract_district_from_city(city)
-            detail_map[city] = {"province": province, "district": district}
-            city_map[city] = province
-        else:
-            country = extract_country(city)
-            city_map[city] = country
-            # 境外城市不加入 detail_map
-
-    return city_map, detail_map
-
-def generate_flight_records(df):
+def parse_excel(df, detected_cols):
+    """解析并标准化Excel数据，返回每行计划的字典列表"""
     records = []
-    for _, row in df.iterrows():
-        purpose_raw = row.get("用途", "")
-        # 如果用途包含“维修”或“调机”，则选择“调机”，否则“自用飞行”
-        if "维修" in purpose_raw or "调机" in purpose_raw:
-            purpose = "调机"
+    # 获取实际列名
+    reg_col = detected_cols.get("aircraft_reg")
+    dep_col = detected_cols.get("departure")
+    arr_col = detected_cols.get("arrival")
+    purpose_col = detected_cols.get("purpose")
+    planned_dep_col = detected_cols.get("planned_dep")
+    planned_arr_col = detected_cols.get("planned_arr")
+    
+    # 检查必要列
+    required = [reg_col, dep_col, arr_col, purpose_col]
+    if not all(required):
+        missing = [col for col in required if col is None]
+        st.error(f"Excel缺少必要列：{missing}。请确保包含飞机注册号、出发地、到达地、用途列。")
+        return None
+    
+    for idx, row in df.iterrows():
+        # 飞机注册号
+        reg = str(row[reg_col]).strip()
+        if pd.isna(reg) or reg == "nan":
+            continue
+        
+        # 出发地、到达地
+        dep = str(row[dep_col]).strip()
+        arr = str(row[arr_col]).strip()
+        if pd.isna(dep) or pd.isna(arr):
+            continue
+        
+        # 用途：判断是否调机或维修
+        purpose_raw = str(row[purpose_col]).lower() if not pd.isna(row[purpose_col]) else ""
+        if "调机" in purpose_raw or "维修" in purpose_raw or "ferry" in purpose_raw:
+            purpose = "Ferry"
         else:
-            purpose = "自用飞行"
-        start_date = str(row["出发日期"])
-        end_date = str(row["到达日期"])
-        flight_time = row.get("预计飞行时间", "")
-        hours, minutes = parse_flight_time(flight_time)
-        dep_city = str(row["出发城市"]).strip()
-        arr_city = str(row["到达城市"]).strip()
-        reg_raw = str(row["飞机注册号"]).strip()
-        record = {
-            "reg": reg_raw,
-            "start_date": start_date,
-            "end_date": end_date,
+            purpose = "Business"
+        
+        # 计划出发时间处理
+        planned_dep_str = ""
+        if planned_dep_col == "combined_dep":
+            # 从拆分列组合
+            dep_date = row[detected_cols.get("dep_date")]
+            dep_time = row[detected_cols.get("dep_time")]
+            if pd.notna(dep_date) and pd.notna(dep_time):
+                try:
+                    dt = pd.to_datetime(f"{dep_date} {dep_time}", errors='coerce')
+                    if pd.notna(dt):
+                        planned_dep_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    pass
+        elif planned_dep_col:
+            val = row[planned_dep_col]
+            if pd.notna(val):
+                try:
+                    dt = pd.to_datetime(val)
+                    planned_dep_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    planned_dep_str = str(val)
+        
+        # 预计到达时间处理
+        planned_arr_str = ""
+        if planned_arr_col == "combined_arr":
+            arr_date = row[detected_cols.get("arr_date")]
+            arr_time = row[detected_cols.get("arr_time")]
+            if pd.notna(arr_date) and pd.notna(arr_time):
+                try:
+                    dt = pd.to_datetime(f"{arr_date} {arr_time}", errors='coerce')
+                    if pd.notna(dt):
+                        planned_arr_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    pass
+        elif planned_arr_col:
+            val = row[planned_arr_col]
+            if pd.notna(val):
+                try:
+                    dt = pd.to_datetime(val)
+                    planned_arr_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    planned_arr_str = str(val)
+        
+        # 额外提取出发日期（用于单独日期字段）
+        dep_date_only = ""
+        if planned_dep_str:
+            dep_date_only = planned_dep_str.split()[0]
+        
+        records.append({
+            "reg": reg,
+            "departure": dep,
+            "arrival": arr,
+            "dep_arr_combo": f"{dep}-{arr}",
             "purpose": purpose,
-            "dep_city": dep_city,
-            "arr_city": arr_city,
-            "flight_hours": hours,
-            "flight_minutes": minutes
-        }
-        records.append(record)
-    return json.dumps(records, ensure_ascii=False, indent=4)
-
-def generate_js_script(flight_records_json, city_map_json, city_detail_map_json):
-    template = """
-// ==================== 自动生成的飞行计划填报脚本 ====================
-// 生成时间: __DATETIME__
-// 总计 __COUNT__ 条计划
-
-// ==================== 获取最新 iframe 文档 ====================
-async function getCurrentDoc() {
-    const iframe = document.querySelector('#main');
-    if (!iframe) throw new Error('未找到 iframe');
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }
-    return doc;
-}
-
-// ==================== 等待元素出现 ====================
-async function waitForElement(selector, timeout = 15000, isXPath = false) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const doc = await getCurrentDoc();
-        let el;
-        if (isXPath) {
-            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        } else {
-            el = doc.querySelector(selector);
-        }
-        if (el) return el;
-        await sleep(500);
-    }
-    return null;
-}
-
-// ==================== 弹窗确定按钮搜索 ====================
-async function waitForDialogConfirmButton(timeout = 15000) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        let btn = document.evaluate('//a[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (!btn) btn = document.evaluate('//button[contains(text(), "确定")]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (btn) return btn;
-        try {
-            const doc = await getCurrentDoc();
-            btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (btn) return btn;
-        } catch(e) {}
-        await sleep(300);
-    }
-    return null;
-}
-
-// ==================== 确保当前在列表页 ====================
-async function ensureListPage() {
-    const btn = await waitForElement('input.query.yuanjiao', 15000);
-    if (btn) return true;
-    console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
-    const doc = await getCurrentDoc();
-    let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (closeBtn) {
-        closeBtn.click();
-        console.log('已点击关闭按钮，等待返回列表页');
-        await sleep(1000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 10000);
-        return backBtn !== null;
-    } else {
-        console.warn('未找到返回按钮，请手动关闭对话框后继续（脚本将等待5秒）');
-        await sleep(5000);
-        const backBtn = await waitForElement('input.query.yuanjiao', 5000);
-        return backBtn !== null;
-    }
-}
-
-// ==================== 城市到地区/国家的映射 ====================
-const CITY_MAP = __CITY_MAP__;
-
-// 境内机场到（省份，区县）的详细映射
-const CITY_DETAIL_MAP = __CITY_DETAIL_MAP__;
-
-function getLocationInfo(city) {
-    const domesticKeywords = __DOMESTIC_KEYWORDS__;
-    const isDomestic = domesticKeywords.some(keyword => city.includes(keyword));
+            "departure_date": dep_date_only,
+            "planned_departure": planned_dep_str,
+            "planned_arrival": planned_arr_str,
+        })
     
-    if (isDomestic) {
-        let region = CITY_MAP[city];
-        if (!region) {
-            const match = city.match(/^([^\\s\\-]+)/);
-            region = match ? match[1] : city;
-        }
-        return { zone: "境内", region: region, needThirdSelect: true };
-    } else {
-        let country = CITY_MAP[city];
-        if (!country) {
-            const parts = city.split(/[\\s\\-]/);
-            country = parts[0];
-        }
-        return { zone: "境外", region: country, needThirdSelect: false };
-    }
-}
+    return records
 
-// ==================== 选择器 ====================
-const SELECTORS = {
-    addBtnCSS: 'input.query.yuanjiao',
-    aircraftSelect: '//*[@id="ele7"]',
-    specialSelect: '#specialf',
-    certSelect: '#operationCertificate',
-    operateSelect: '#businessOperation',
-    // 非经营活动下拉框：使用文本定位，避免绝对路径失效
-    purposeSelect: '//*[contains(text(), "非经营活动")]/following-sibling::*//select',
-    startDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[9]/div/input',
-    endDate: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[10]/div/input',
-    firstFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[1]',
-    firstFlightMinute: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[2]/div/input[2]',
-    firstFlights: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[3]/div/input',
-    addSegmentBtn: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[1]/div/div/button',
-    secondFlightHour: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[2]/div/input[1]',
-    secondFlightMinute: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[2]/div/input[2]',
-    secondFlights: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[3]/div/input',
-    detailArea: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[25]/div/input',
-    customer: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[27]/div/input',
-    base: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[28]/div/input',
-    operator: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[29]/div/input',
-    phone: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[30]/div/input',
-    contractSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[36]/div/select',
-    insuranceSelect: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[37]/div/select',
-    submitBtn: '/html/body/div[1]/div/div[3]/div/div[2]/form/div[40]/ul/li[2]/input',
-};
-
-// ==================== 辅助函数 ====================
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function setSelectValue(selectElement, valueText) {
-    for (let i = 0; i < selectElement.options.length; i++) {
-        const opt = selectElement.options[i];
-        if (opt.text === valueText || opt.text.includes(valueText)) {
-            selectElement.selectedIndex = i;
-            selectElement.dispatchEvent(new Event('change', { bubbles: true }));
-            await sleep(300);
-            return true;
-        }
-    }
-    console.warn(`未找到选项: ${valueText}，可用选项：`, Array.from(selectElement.options).map(o => o.text));
-    return false;
-}
-
-function setDateInput(inputEl, dateStr) {
-    if (!inputEl) return false;
-    inputEl.value = dateStr;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-    inputEl.blur();
-    sleep(200);
-    return true;
-}
-
-// 通用航段填充函数（改进版，不再自动选择第二个选项）
-async function fillSegmentSelects(container, city) {
-    const selects = container.querySelectorAll('select');
-    if (selects.length < 2) {
-        console.warn('航段容器内 select 数量不足');
-        return false;
-    }
+def generate_automation_script(records_by_aircraft, target_url):
+    """生成Selenium自动化脚本（内嵌数据）"""
+    script_lines = []
+    script_lines.append("#!/usr/bin/env python3")
+    script_lines.append("# -*- coding: utf-8 -*-")
+    script_lines.append("\"\"\"")
+    script_lines.append("自动飞行计划填写脚本")
+    script_lines.append(f"目标网页: {target_url}")
+    script_lines.append("生成时间: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    script_lines.append("\"\"\"")
+    script_lines.append("")
+    script_lines.append("import time")
+    script_lines.append("from selenium import webdriver")
+    script_lines.append("from selenium.webdriver.common.by import By")
+    script_lines.append("from selenium.webdriver.support.ui import WebDriverWait")
+    script_lines.append("from selenium.webdriver.support import expected_conditions as EC")
+    script_lines.append("from selenium.webdriver.common.keys import Keys")
+    script_lines.append("from selenium.common.exceptions import TimeoutException, NoSuchElementException")
+    script_lines.append("")
+    script_lines.append("# ==================== 配置区域 ====================")
+    script_lines.append(f"TARGET_URL = \"{target_url}\"")
+    script_lines.append("WAIT_TIME = 10  # 显式等待超时时间")
+    script_lines.append("")
+    script_lines.append("# 以下为从Excel解析出的飞行计划数据（按飞机分组）")
+    script_lines.append("FLIGHT_DATA = " + repr(records_by_aircraft))
+    script_lines.append("")
+    script_lines.append("# ==================== 辅助函数 ====================")
+    script_lines.append("")
+    script_lines.append("def wait_and_find_element(driver, by, selector, timeout=WAIT_TIME):")
+    script_lines.append("    \"\"\"等待元素可见并返回\"\"\"")
+    script_lines.append("    return WebDriverWait(driver, timeout).until(")
+    script_lines.append("        EC.visibility_of_element_located((by, selector))")
+    script_lines.append("    )")
+    script_lines.append("")
+    script_lines.append("def click_element(driver, element):")
+    script_lines.append("    \"\"\"安全点击元素\"\"\"")
+    script_lines.append("    driver.execute_script(\"arguments[0].scrollIntoView(true);\", element)")
+    script_lines.append("    time.sleep(0.5)")
+    script_lines.append("    element.click()")
+    script_lines.append("")
+    script_lines.append("def input_text(element, text):")
+    script_lines.append("    \"\"\"清空并输入文本\"\"\"")
+    script_lines.append("    element.clear()")
+    script_lines.append("    element.send_keys(text)")
+    script_lines.append("")
+    script_lines.append("def fill_cell_by_column_index(row_element, col_index, value):")
+    script_lines.append("    \"\"\"")
+    script_lines.append("    在表格行的指定列中填入值（适配可编辑div单元格）")
+    script_lines.append("    参数: row_element - 行的WebElement, col_index - 列索引(从1开始), value - 要填入的文本")
+    script_lines.append("    \"\"\"")
+    script_lines.append("    try:")
+    script_lines.append("        # 定位该行下第col_index列的单元格")
+    script_lines.append("        cell = row_element.find_element(By.XPATH, f\"./td[{col_index}]//div[contains(@class, 'single-line-and-ellipsis') or @class]\"))")
+    script_lines.append("        # 点击单元格激活编辑")
+    script_lines.append("        click_element(driver, cell)")
+    script_lines.append("        time.sleep(0.3)")
+    script_lines.append("        # 查找可编辑区域（可能是div或input）")
+    script_lines.append("        try:")
+    script_lines.append("            editable = cell.find_element(By.XPATH, \".//div[@contenteditable='true'] | .//input | .//textarea\")")
+    script_lines.append("        except:")
+    script_lines.append("            editable = cell")
+    script_lines.append("        # 清空并输入新值")
+    script_lines.append("        editable.clear()")
+    script_lines.append("        editable.send_keys(value)")
+    script_lines.append("        time.sleep(0.2)")
+    script_lines.append("        # 按回车确认（模拟失去焦点）")
+    script_lines.append("        editable.send_keys(Keys.ENTER)")
+    script_lines.append("    except Exception as e:")
+    script_lines.append("        print(f\"❌ 填写第{col_index}列失败: {e}\")")
+    script_lines.append("")
+    script_lines.append("def add_new_row(driver, add_button):")
+    script_lines.append("    \"\"\"点击增行按钮并返回新添加的行元素\"\"\"")
+    script_lines.append("    # 记录当前行数")
+    script_lines.append("    table = driver.find_element(By.XPATH, \"//table/tbody\")")
+    script_lines.append("    rows_before = len(table.find_elements(By.XPATH, \"./tr\"))")
+    script_lines.append("    click_element(driver, add_button)")
+    script_lines.append("    time.sleep(1)")
+    script_lines.append("    # 等待行数增加")
+    script_lines.append("    WebDriverWait(driver, WAIT_TIME).until(")
+    script_lines.append("        lambda d: len(table.find_elements(By.XPATH, \"./tr\")) > rows_before")
+    script_lines.append("    )")
+    script_lines.append("    rows = table.find_elements(By.XPATH, \"./tr\")")
+    script_lines.append("    return rows[-1]  # 返回最后一行")
+    script_lines.append("")
+    script_lines.append("def fill_flight_plan_row(row_element, plan):")
+    script_lines.append("    \"\"\"填充一行飞行计划的所有字段\"\"\"")
+    script_lines.append("    # 列索引根据目标网页结构定义（3:出发地-到达地组合, 4:注册号, 5:用途, 6:注册号再次, 7:出发地, 8:到达地, 10:出发日期, 11:计划出发, 12:预计到达）")
+    script_lines.append("    fill_cell_by_column_index(row_element, 3, plan['dep_arr_combo'])")
+    script_lines.append("    fill_cell_by_column_index(row_element, 4, plan['reg'])")
+    script_lines.append("    fill_cell_by_column_index(row_element, 5, plan['purpose'])")
+    script_lines.append("    fill_cell_by_column_index(row_element, 6, plan['reg'])")
+    script_lines.append("    fill_cell_by_column_index(row_element, 7, plan['departure'])")
+    script_lines.append("    fill_cell_by_column_index(row_element, 8, plan['arrival'])")
+    script_lines.append("    if plan['departure_date']:")
+    script_lines.append("        fill_cell_by_column_index(row_element, 10, plan['departure_date'])")
+    script_lines.append("    if plan['planned_departure']:")
+    script_lines.append("        fill_cell_by_column_index(row_element, 11, plan['planned_departure'])")
+    script_lines.append("    if plan['planned_arrival']:")
+    script_lines.append("        fill_cell_by_column_index(row_element, 12, plan['planned_arrival'])")
+    script_lines.append("    print(f\"    ✅ 计划 {plan['dep_arr_combo']} 填写完成\")")
+    script_lines.append("")
+    script_lines.append("# ==================== 主流程 ====================")
+    script_lines.append("def main():")
+    script_lines.append("    # 初始化浏览器")
+    script_lines.append("    print(\"🚀 启动浏览器...\")")
+    script_lines.append("    options = webdriver.ChromeOptions()")
+    script_lines.append("    options.add_argument(\"--start-maximized\")")
+    script_lines.append("    driver = webdriver.Chrome(options=options)  # 如使用其他浏览器请修改")
+    script_lines.append("    try:")
+    script_lines.append("        driver.get(TARGET_URL)")
+    script_lines.append("        print(f\"✅ 已打开目标网页: {TARGET_URL}\")")
+    script_lines.append("        time.sleep(3)  # 等待页面初始加载")
+    script_lines.append("")
+    script_lines.append("        # 定位顶部飞机注册号输入框（根据提供的XPath特征）")
+    script_lines.append("        # 尝试多种定位方式")
+    script_lines.append("        try:")
+    script_lines.append("            reg_input = wait_and_find_element(driver, By.XPATH, \"//input[@class='nc-input refer-input'] | //input[@placeholder=''] | //div[contains(@class,'refer-input')]/input\"))")
+    script_lines.append("        except:")
+    script_lines.append("            # 如果找不到，使用备用绝对路径（用户提供）")
+    script_lines.append("            reg_input = driver.find_element(By.XPATH, \"/html/body/div[1]/div/div[1]/div[1]/div[2]/div/div/span/div[1]/div/div/div/div/span[8]/div[2]/div[2]/div/div/div[2]/div/ul/li[2]/div/input\")")
+    script_lines.append("")
+    script_lines.append("        # 定位增行按钮")
+    script_lines.append("        try:")
+    script_lines.append("            add_btn = wait_and_find_element(driver, By.XPATH, \"//button[contains(text(),'增行')] | //button[@fieldid='FlightPlanUTC_AddLine_btn']\"))")
+    script_lines.append("        except:")
+    script_lines.append("            add_btn = driver.find_element(By.XPATH, \"/html/body/div[1]/div/div[1]/div[2]/div/div/div[2]/div/div/div/div/div/div/main/div/div/section/div[2]/header/div[3]/div/div/span/div/button[1]\")")
+    script_lines.append("")
+    script_lines.append("        # 遍历每架飞机")
+    script_lines.append("        for idx, (reg, plans) in enumerate(FLIGHT_DATA.items(), 1):")
+    script_lines.append("            print(f\"\\n✈️ 正在处理第{idx}架飞机: {reg} (共{len(plans)}条计划)\")")
+    script_lines.append("            # 输入顶部飞机注册号")
+    script_lines.append("            input_text(reg_input, reg)")
+    script_lines.append("            print(f\"   📝 已输入顶部注册号: {reg}\")")
+    script_lines.append("            time.sleep(1)")
+    script_lines.append("")
+    script_lines.append("            # 处理该飞机的第一条计划（需要先点击增行）")
+    script_lines.append("            print(\"   ➕ 点击增行，添加第一条计划...\")")
+    script_lines.append("            first_row = add_new_row(driver, add_btn)")
+    script_lines.append("            fill_flight_plan_row(first_row, plans[0])")
+    script_lines.append("")
+    script_lines.append("            # 处理剩余的后续计划（如果有）")
+    script_lines.append("            for plan in plans[1:]:")
+    script_lines.append("                print(\"   ➕ 再次点击增行，添加下一条计划...\")")
+    script_lines.append("                new_row = add_new_row(driver, add_btn)")
+    script_lines.append("                fill_flight_plan_row(new_row, plan)")
+    script_lines.append("")
+    script_lines.append("            print(f\"✅ 飞机 {reg} 的所有计划填写完毕！\")")
+    script_lines.append("            # 等待用户检查确认")
+    script_lines.append("            input(\"\\n⏸️ 请人工检查当前飞机的填写是否正确。按 Enter 键继续处理下一架飞机...\")")
+    script_lines.append("")
+    script_lines.append("        print(\"\\n🎉 所有飞机的飞行计划已填写完成！脚本结束。\")")
+    script_lines.append("        input(\"按 Enter 键关闭浏览器...\")")
+    script_lines.append("    except Exception as e:")
+    script_lines.append("        print(f\"❌ 发生错误: {e}\")")
+    script_lines.append("        import traceback")
+    script_lines.append("        traceback.print_exc()")
+    script_lines.append("        input(\"按 Enter 键退出...\")")
+    script_lines.append("    finally:")
+    script_lines.append("        driver.quit()")
+    script_lines.append("")
+    script_lines.append("if __name__ == \"__main__\":")
+    script_lines.append("    main()")
     
-    const info = getLocationInfo(city);
-    if (info.zone === "境外") {
-        await setSelectValue(selects[0], info.zone);
-        await setSelectValue(selects[1], info.region);
-        return true;
-    }
-    
-    // 境内
-    const detail = CITY_DETAIL_MAP[city];
-    if (!detail) {
-        console.warn(`未找到城市 ${city} 的详细映射，将使用降级处理`);
-        await setSelectValue(selects[0], "境内");
-        await setSelectValue(selects[1], info.region);
-        if (selects.length >= 3) {
-            const thirdSelect = selects[2];
-            // 点击“请选择”按钮
-            let chooseBtn = null;
-            const possibleButtons = container.querySelectorAll('button, div, span');
-            for (let el of possibleButtons) {
-                if (el.innerText && el.innerText.includes('请选择')) {
-                    chooseBtn = el;
-                    break;
-                }
-            }
-            if (chooseBtn) {
-                chooseBtn.click();
-                await sleep(1000);
-            }
-            // 等待选项加载
-            await sleep(1000);
-            // 不再自动选择第二个选项，仅输出警告
-            if (thirdSelect.options.length > 1) {
-                console.warn(`未找到区县选项，第三个下拉框将保持当前选择（默认为第一个选项）`);
-            } else {
-                console.warn('第三个下拉框选项不足');
-            }
-        }
-        return true;
-    }
-    
-    // 设置境内和省份
-    await setSelectValue(selects[0], "境内");
-    await setSelectValue(selects[1], detail.province);
-    
-    // 等待1.5秒，让第三个下拉框的选项加载
-    console.log(`等待第三个下拉框选项加载 (${detail.district})...`);
-    await sleep(1500);
-    
-    // 重新获取第三个下拉框元素
-    const newSelects = container.querySelectorAll('select');
-    if (newSelects.length < 3) {
-        console.warn('重新获取后第三个下拉框不存在');
-        return false;
-    }
-    const thirdSelect = newSelects[2];
-    
-    // 打印选项列表
-    console.log('第三个下拉框当前选项:', Array.from(thirdSelect.options).map(o => o.text));
-    
-    // 尝试匹配目标区县
-    let targetIndex = -1;
-    for (let i = 0; i < thirdSelect.options.length; i++) {
-        if (thirdSelect.options[i].text.includes(detail.district)) {
-            targetIndex = i;
-            break;
-        }
-    }
-    
-    if (targetIndex !== -1) {
-        thirdSelect.selectedIndex = targetIndex;
-        thirdSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        console.log(`已选择第三个下拉框: ${thirdSelect.options[targetIndex].text}`);
-    } else {
-        console.warn(`未找到区县选项: ${detail.district}，请手动选择或补充映射。`);
-        // 不再自动选择
-    }
-    await sleep(500);
-    return true;
-}
+    return "\n".join(script_lines)
 
-async function fillFirstSegmentSelects(city) {
-    const container = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[1]/div/div', 5000, true);
-    if (!container) {
-        console.warn('未找到第一个航段容器');
-        return false;
-    }
-    return fillSegmentSelects(container, city);
-}
-
-async function fillFirstSegmentTime(record) {
-    const hourInput = await waitForElement(SELECTORS.firstFlightHour, 5000, true);
-    const minuteInput = await waitForElement(SELECTORS.firstFlightMinute, 5000, true);
-    const flightsInput = await waitForElement(SELECTORS.firstFlights, 5000, true);
-    if (hourInput && minuteInput && flightsInput) {
-        hourInput.value = record.flight_hours.toString().padStart(2, '0');
-        minuteInput.value = record.flight_minutes.toString().padStart(2, '0');
-        flightsInput.value = 1;
-        hourInput.dispatchEvent(new Event('input', { bubbles: true }));
-        minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
-        flightsInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log(`已填入第一个航段时间: ${record.flight_hours}:${record.flight_minutes}, 架次: 1`);
-        return true;
-    }
-    console.warn('无法填入第一个航段时间和架次');
-    return false;
-}
-
-async function fillSecondSegmentSelects(city) {
-    const container = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[2]/div[1]/div/div', 5000, true);
-    if (!container) {
-        console.warn('未找到第二个航段容器');
-        return false;
-    }
-    return fillSegmentSelects(container, city);
-}
-
-async function fillSecondSegmentTime() {
-    const hourInput = await waitForElement(SELECTORS.secondFlightHour, 5000, true);
-    const minuteInput = await waitForElement(SELECTORS.secondFlightMinute, 5000, true);
-    const flightsInput = await waitForElement(SELECTORS.secondFlights, 5000, true);
-    if (hourInput && minuteInput && flightsInput) {
-        hourInput.value = '00';
-        minuteInput.value = '00';
-        flightsInput.value = 0;
-        hourInput.dispatchEvent(new Event('input', { bubbles: true }));
-        minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
-        flightsInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入第二个航段时间: 00:00, 架次: 0');
-        return true;
-    }
-    console.warn('无法填入第二个航段时间和架次');
-    return false;
-}
-
-function formatRegNumber(reg) {
-    if (reg.includes('-')) return reg;
-    const match = reg.match(/^([A-Z]+)(\\d+[A-Z]*)$/);
-    if (match) return `${match[1]}-${match[2]}`;
-    return reg;
-}
-
-async function selectAircraft(reg) {
-    const regForSelect = formatRegNumber(reg);
-    console.log(`尝试选择飞机: ${regForSelect}`);
-    
-    const airbox = await waitForElement('//*[@id="airbox"]', 10000, true);
-    if (!airbox) {
-        console.warn('未找到飞机选择对话框');
-        return false;
-    }
-    const doc = await getCurrentDoc();
-    
-    let span = doc.evaluate(`//span[text()='${regForSelect}']`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!span) {
-        span = doc.evaluate(`//span[contains(text(), '${regForSelect}')]`, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (!span) {
-        console.warn(`未找到包含注册号 ${regForSelect} 的 span 元素`);
-        return false;
-    }
-    const li = span.closest('li');
-    if (!li) {
-        console.warn(`未找到注册号 ${regForSelect} 对应的 li`);
-        return false;
-    }
-    const checkbox = li.querySelector('input[type="checkbox"]');
-    if (!checkbox) {
-        console.warn(`未找到注册号 ${regForSelect} 的复选框`);
-        return false;
-    }
-    checkbox.click();
-    console.log('已勾选飞机复选框');
-    await sleep(300);
-    
-    let closeBtn = doc.evaluate('//*[@id="close7"]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    if (!closeBtn) {
-        closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (!closeBtn) {
-        closeBtn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    }
-    if (closeBtn) {
-        closeBtn.click();
-        console.log('已关闭选择对话框');
-        await sleep(500);
-        return true;
-    } else {
-        console.warn('未找到关闭按钮，尝试按 ESC 关闭');
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-        await sleep(500);
-        return false;
-    }
-}
-
-async function processRecord(record) {
-    console.log(`\\n开始处理：${record.reg} - ${record.dep_city} -> ${record.arr_city}`);
-
-    if (!(await ensureListPage())) {
-        console.error('无法返回列表页，终止流程');
-        return false;
-    }
-
-    const addBtn = await waitForElement(SELECTORS.addBtnCSS);
-    if (!addBtn) {
-        console.error('未找到添加按钮，终止流程');
-        return false;
-    }
-    addBtn.click();
-    console.log('已点击添加按钮，等待表单加载...');
-
-    const aircraftSelectBtn = await waitForElement(SELECTORS.aircraftSelect, 15000, true);
-    if (!aircraftSelectBtn) {
-        console.error('未找到飞机机号选择按钮，终止流程');
-        return false;
-    }
-    console.log('表单加载完成，找到飞机机号选择按钮');
-
-    aircraftSelectBtn.click();
-    if (!(await selectAircraft(record.reg))) {
-        console.error('选择飞机失败，终止流程');
-        return false;
-    }
-
-    const doc = await getCurrentDoc();
-    const specialSelect = doc.querySelector(SELECTORS.specialSelect);
-    if (specialSelect) await setSelectValue(specialSelect, "否");
-    else console.warn('未找到是否特殊任务飞行 select');
-
-    const certSelect = doc.querySelector(SELECTORS.certSelect);
-    if (certSelect) await setSelectValue(certSelect, "是");
-    else console.warn('未找到是否有运行合格证 select');
-
-    const operateSelect = doc.querySelector(SELECTORS.operateSelect);
-    if (operateSelect) await setSelectValue(operateSelect, "否");
-    else console.warn('未找到是否经营性作业 select');
-
-    // 用途下拉框
-    const purposeSelect = await waitForElement(SELECTORS.purposeSelect, 10000, true);
-    if (purposeSelect) await setSelectValue(purposeSelect, record.purpose);
-    else console.warn('未找到用途下拉框');
-
-    const startDateInput = await waitForElement(SELECTORS.startDate, 5000, true);
-    const endDateInput = await waitForElement(SELECTORS.endDate, 5000, true);
-    if (startDateInput) setDateInput(startDateInput, record.start_date);
-    else console.warn('未找到服务开始日期输入框');
-    if (endDateInput) setDateInput(endDateInput, record.end_date);
-    else console.warn('未找到服务结束日期输入框');
-
-    await fillFirstSegmentSelects(record.dep_city);
-    await fillFirstSegmentTime(record);
-
-    const addSegmentBtn = await waitForElement(SELECTORS.addSegmentBtn, 5000, true);
-    if (addSegmentBtn) {
-        addSegmentBtn.click();
-        console.log('已点击添加航段按钮，等待新航段加载...');
-        await sleep(1000);
-        await fillSecondSegmentSelects(record.arr_city);
-        await fillSecondSegmentTime();
-    } else {
-        console.warn('未找到添加航段按钮');
-    }
-
-    const detailAreaInput = await waitForElement(SELECTORS.detailArea, 5000, true);
-    if (detailAreaInput) {
-        detailAreaInput.value = `${record.dep_city}-${record.arr_city}`;
-        detailAreaInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入详细作业地区');
-    } else console.warn('未找到详细作业地区输入框');
-
-    const customerInput = await waitForElement(SELECTORS.customer, 5000, true);
-    if (customerInput) {
-        customerInput.value = "天成商务航空有限公司";
-        customerInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入服务客户名称');
-    } else console.warn('未找到服务客户名称输入框');
-
-    const baseInput = await waitForElement(SELECTORS.base, 5000, true);
-    if (baseInput) {
-        baseInput.value = `${record.dep_city}机场-${record.arr_city}机场`;
-        baseInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入作业基地名称');
-    } else console.warn('未找到作业基地名称输入框');
-
-    const operatorInput = await waitForElement(SELECTORS.operator, 5000, true);
-    if (operatorInput) {
-        operatorInput.value = "张永一";
-        operatorInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入作业负责人姓名');
-    } else console.warn('未找到作业负责人姓名输入框');
-
-    const phoneInput = await waitForElement(SELECTORS.phone, 5000, true);
-    if (phoneInput) {
-        phoneInput.value = "18566725728";
-        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('已填入负责人联系电话');
-    } else console.warn('未找到负责人联系电话输入框');
-
-    const contractSelect = await waitForElement(SELECTORS.contractSelect, 5000, true);
-    if (contractSelect) await setSelectValue(contractSelect, "已签订");
-    else console.warn('未找到合同订立情况下拉框');
-
-    const insuranceSelect = await waitForElement(SELECTORS.insuranceSelect, 5000, true);
-    if (insuranceSelect) await setSelectValue(insuranceSelect, "已参保");
-    else console.warn('未找到保险情况下拉框');
-
-    const submitBtn = await waitForElement(SELECTORS.submitBtn, 5000, true);
-    if (submitBtn) {
-        submitBtn.click();
-        console.log('已提交，等待弹窗...');
-        let confirmBtn = null;
-        for (let attempt = 0; attempt < 8; attempt++) {
-            confirmBtn = await waitForDialogConfirmButton(2000);
-            if (confirmBtn) break;
-            console.log(`等待确定按钮... 第${attempt+1}次尝试`);
-        }
-        if (confirmBtn) {
-            confirmBtn.click();
-            console.log('已点击确定按钮');
-        } else {
-            console.warn('未找到确定按钮，请手动点击');
-        }
-        console.log('等待返回列表页...');
-        await waitForElement(SELECTORS.addBtnCSS, 15000);
-        console.log(`处理完成：${record.reg}`);
-    } else {
-        console.warn('未找到提交按钮');
-    }
-    await sleep(2000);
-    return true;
-}
-
-// ==================== 执行 ====================
-(async () => {
-    const flightRecords = __FLIGHT_RECORDS__;
-    for (let i = 0; i < flightRecords.length; i++) {
-        const success = await processRecord(flightRecords[i]);
-        if (!success) {
-            console.error(`第 ${i+1} 条处理失败，终止后续执行。`);
-            break;
-        }
-    }
-    console.log("所有计划处理完毕");
-})();
-"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    count = len(json.loads(flight_records_json))
-    final_script = template.replace("__DATETIME__", now)
-    final_script = final_script.replace("__COUNT__", str(count))
-    final_script = final_script.replace("__CITY_MAP__", city_map_json)
-    final_script = final_script.replace("__CITY_DETAIL_MAP__", city_detail_map_json)
-    final_script = final_script.replace("__DOMESTIC_KEYWORDS__", json.dumps(DOMESTIC_KEYWORDS))
-    final_script = final_script.replace("__FLIGHT_RECORDS__", flight_records_json)
-    return final_script
-
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="飞行计划自动填报代码生成器", layout="wide")
-st.title("✈️ 飞行计划自动填报代码生成器")
-st.markdown("上传 Excel 文件，自动生成可直接在浏览器控制台运行的 JavaScript 代码（**智能识别所有境内城市省份，自动匹配区县，无需手动补充映射**）")
-
-st.sidebar.header("文件读取配置")
-header_row = st.sidebar.number_input("标题行行号（从0开始）", min_value=0, max_value=10, value=1, step=1,
-                                     help="Excel 中实际列名所在的行索引（第一行为0）。通常您的文件第二行是列名，因此输入 1。")
-
-uploaded_file = st.file_uploader("📂 上传 Excel 文件（航段数据）", type=["xlsx", "xls"])
-
+# 当文件上传后处理
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file, header=header_row)
-        df.columns = df.columns.str.strip()
-        df = df.dropna(how='all')
-        st.success("文件上传成功！")
-
-        # 检查必要列
-        required_cols = ["飞机注册号", "出发日期", "到达日期", "用途", "出发城市", "到达城市", "预计飞行时间"]
-        missing = [col for col in required_cols if col not in df.columns]
-        if missing:
-            st.error(f"❌ 缺少必要列: {missing}")
-            st.info(f"实际列名: {list(df.columns)}")
-        else:
-            # 解析出发日期，并过滤出次日计划
-            df['出发日期'] = pd.to_datetime(df['出发日期']).dt.date
-            today = date.today()
-            tomorrow = today + timedelta(days=1)
-            df_tomorrow = df[df['出发日期'] == tomorrow].copy()
-
-            if df_tomorrow.empty:
-                st.warning(f"⚠️ 未找到出发日期为 {tomorrow} 的次日计划，脚本将无法生成。")
-                st.info("请检查文件中是否包含次日（明日）的飞行计划。")
-            else:
-                st.info(f"✅ 筛选出 {len(df_tomorrow)} 条次日计划（出发日期 = {tomorrow}）")
-                st.subheader("📊 次日计划预览")
-                st.dataframe(df_tomorrow.head())
-
-                # 生成脚本（使用过滤后的数据）
-                with st.spinner("正在构建城市映射并生成脚本..."):
-                    custom_detail_map = {}
-                    city_map, detail_map = build_city_mappings(df_tomorrow, custom_detail_map)
-                    city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
-                    detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
-                    flight_records_json = generate_flight_records(df_tomorrow)
-                    st.subheader("🔍 城市映射预览（前10个）")
-                    preview_map = {k: v for k, v in list(city_map.items())[:10]}
-                    st.json(preview_map)
-                    final_script = generate_js_script(flight_records_json, city_map_json, detail_map_json)
-                    st.success("脚本生成成功！")
-                    st.subheader("📋 复制以下代码到浏览器控制台（F12）运行")
-                    st.code(final_script, language="javascript")
-                    st.info("💡 提示：请确保已登录系统并停留在「经营活动信息管理」列表页")
+        df = pd.read_excel(uploaded_file)
+        st.success(f"✅ 文件上传成功！共 {df.shape[0]} 行，{df.shape[1]} 列")
+        
+        # 显示数据预览
+        st.subheader("📊 数据预览（前5行）")
+        st.dataframe(df.head())
+        
+        # 检测列映射
+        detected = detect_columns(df)
+        st.subheader("🔍 列名识别结果")
+        col_markdown = ""
+        for std, actual in detected.items():
+            col_markdown += f"- **{std}** → `{actual}`\n"
+        st.markdown(col_markdown)
+        
+        # 解析数据
+        with st.spinner("解析Excel数据..."):
+            records = parse_excel(df, detected)
+        
+        if records is None:
+            st.stop()
+        
+        if len(records) == 0:
+            st.warning("未找到有效的飞行计划数据，请检查Excel内容。")
+            st.stop()
+        
+        # 按飞机注册号分组
+        records_by_aircraft = {}
+        for rec in records:
+            reg = rec["reg"]
+            if reg not in records_by_aircraft:
+                records_by_aircraft[reg] = []
+            records_by_aircraft[reg].append(rec)
+        
+        st.subheader("✈️ 解析结果（按飞机分组）")
+        for reg, plans in records_by_aircraft.items():
+            st.markdown(f"**{reg}**：{len(plans)} 条计划")
+            for p in plans:
+                st.caption(f"  {p['dep_arr_combo']} | {p['planned_departure']} → {p['planned_arrival']} | {p['purpose']}")
+        
+        # 生成脚本按钮
+        if st.button("🚀 生成自动化脚本", type="primary"):
+            if not target_url or target_url == "https://example.com/flight-plan":
+                st.warning("请在侧边栏填写正确的目标网页URL！")
+                st.stop()
+            
+            script_content = generate_automation_script(records_by_aircraft, target_url)
+            
+            # 提供下载
+            st.download_button(
+                label="📥 下载脚本 (flight_auto.py)",
+                data=script_content,
+                file_name="flight_auto.py",
+                mime="text/x-python",
+                help="点击下载生成的Python自动化脚本"
+            )
+            
+            st.info("""
+            **使用生成的脚本**：
+            1. 将下载的 `flight_auto.py` 保存到本地。
+            2. 确保已安装依赖：`pip install selenium pandas`
+            3. 如需自动管理驱动，可安装 `webdriver-manager` 并修改脚本。
+            4. 在命令行运行：`python flight_auto.py`
+            5. 脚本将打开浏览器，自动执行填写，每架飞机完成后会暂停等待您的检查。
+            """)
+            
     except Exception as e:
-        st.error(f"处理文件时出错: {e}")
+        st.error(f"处理Excel时出错: {e}")
+        st.exception(e)
 else:
-    st.info("请上传 Excel 文件开始")
+    st.info("👈 请从左侧上传Excel文件开始")
 
+# 页脚
 st.markdown("---")
-st.caption("本工具内置完整中国城市-省份映射表，自动识别境内城市省份，并从城市名中提取关键词作为区县名，无需手动补充映射。")
+st.caption("本工具生成Selenium脚本，请在受信任的环境中运行。如遇元素定位问题，请根据实际网页结构调整XPath。")
