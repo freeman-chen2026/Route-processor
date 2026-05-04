@@ -43,10 +43,22 @@ COUNTRIES = [
     "其他"
 ]
 
-# 常见国家缩写映射（解决“印尼”->“印度尼西亚”等问题）
+# 常见国家缩写映射（解决“印尼”->“印度尼西亚”、“台北”->“台湾”等）
 ABBR_TO_COUNTRY = {
     "印尼": "印度尼西亚",
+    "台北": "台湾",
+    "高雄": "台湾",
+    "台中": "台湾",
+    "花莲": "台湾",
+    "台东": "台湾",
+    "嘉义": "台湾",
+    "台南": "台湾",
 }
+
+# 台湾主要机场城市列表（用于直接判断境外）
+TAIWAN_CITIES = [
+    "台北松山", "台北桃园", "高雄小港", "台中清泉岗", "花莲", "台东", "嘉义", "台南", "马公", "金门", "马祖"
+]
 
 # 中国境内城市到省份的自动映射表（覆盖所有地级市及常见城市名）
 CITY_TO_PROVINCE = {
@@ -167,11 +179,15 @@ def extract_country(city_name):
         first_part = parts[0]
         if first_part in ABBR_TO_COUNTRY:
             return ABBR_TO_COUNTRY[first_part]
-    # 2. 再尝试完整匹配国家名
+    # 2. 如果是台湾城市，直接返回台湾
+    for tw_city in TAIWAN_CITIES:
+        if tw_city in city_name:
+            return "台湾"
+    # 3. 再尝试完整匹配国家名
     for country in COUNTRIES:
         if country in city_name:
             return country
-    # 3. 否则返回第一个词
+    # 4. 否则返回第一个词
     if parts:
         return parts[0]
     return city_name
@@ -203,6 +219,11 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
+        # 台湾城市直接映射到台湾，不加入 detail_map
+        if any(tw in city for tw in TAIWAN_CITIES):
+            city_map[city] = "台湾"
+            continue
+
         if city in detail_map:
             province = detail_map[city]["province"]
             city_map[city] = province
@@ -304,10 +325,21 @@ function setNumberInput(inputEl, value) {{
 
 // 以下为动态生成的城市和国家映射
 const CITY_MAP_RAW = {city_map_json};
-// 对 CITY_MAP 进行后处理，确保“印尼巴厘岛”等映射到正确的国家
+// 对 CITY_MAP 进行后处理，确保台湾城市和“印尼巴厘岛”映射到正确的国家
 const CITY_MAP = {{
     ...CITY_MAP_RAW,
-    "印尼巴厘岛": "印度尼西亚",   // 强制映射
+    "印尼巴厘岛": "印度尼西亚",
+    "台北松山": "台湾",
+    "台北桃园": "台湾",
+    "高雄小港": "台湾",
+    "台中清泉岗": "台湾",
+    "花莲": "台湾",
+    "台东": "台湾",
+    "嘉义": "台湾",
+    "台南": "台湾",
+    "马公": "台湾",
+    "金门": "台湾",
+    "马祖": "台湾"
 }};
 const DOMESTIC_KEYWORDS = {domestic_keywords_json};
 
@@ -324,6 +356,7 @@ function getLocationInfo(city) {{
             if (parts.length > 0) {{
                 const first = parts[0];
                 if (first === "印尼") country = "印度尼西亚";
+                else if (["台北","高雄","台中","花莲","台东","嘉义","台南"].includes(first)) country = "台湾";
                 else country = first;
             }} else {{
                 country = city;
