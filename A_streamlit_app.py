@@ -735,6 +735,27 @@ async function waitForTable() {{
     return null;
 }}
 
+// 改进的匹配函数：从航段文本中提取出发和到达城市关键词（支持“境外-台湾”等格式）
+function extractCityKeywords(segText) {{
+    let parts = segText.split(',');
+    if (parts.length < 2) return null;
+    let depPart = parts[0].trim();
+    let arrPart = parts[1].trim();
+    // 去除“境内-”或“境外-”前缀
+    depPart = depPart.replace(/^(境内|境外)-/, '');
+    arrPart = arrPart.replace(/^(境内|境外)-/, '');
+    let extract = (part) => {{
+        let segments = part.split('-');
+        let keywords = [];
+        for (let seg of segments) {{
+            let words = seg.split(/\\s+/);
+            for (let w of words) if (w) keywords.push(w);
+        }}
+        return keywords;
+    }};
+    return {{ depKeywords: extract(depPart), arrKeywords: extract(arrPart) }};
+}}
+
 // 尝试匹配网页上的计划行，返回匹配的行对象，否则返回 null
 async function tryMatchPlan(plan) {{
     const rows = await waitForTable();
@@ -755,24 +776,10 @@ async function tryMatchPlan(plan) {{
         const segEl = row.querySelector(SEGMENT_SELECTOR);
         if (!segEl) continue;
         const segText = segEl.innerText.trim();
-        const parts = segText.split(',');
-        if (parts.length < 2) continue;
-        const depPart = parts[0].trim();
-        const arrPart = parts[1].trim();
-        const extract = (part) => {{
-            let afterPrefix = part.replace(/^(境内|境外)-/, '');
-            const segments = afterPrefix.split('-');
-            const keywords = [];
-            for (let seg of segments) {{
-                const words = seg.split(/\\s+/);
-                for (let w of words) if (w) keywords.push(w);
-            }}
-            return keywords;
-        }};
-        const depKeywords = extract(depPart);
-        const arrKeywords = extract(arrPart);
-        const depMatch = depKeywords.some(kw => depCity.includes(kw));
-        const arrMatch = arrKeywords.some(kw => arrCity.includes(kw));
+        const kw = extractCityKeywords(segText);
+        if (!kw) continue;
+        const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
+        const arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
         if (depMatch && arrMatch) {{
             return row;
         }}
@@ -783,7 +790,18 @@ async function tryMatchPlan(plan) {{
 // 执行已有航段的填写（点击执行按钮）
 async function processExistingPlan(row, plan) {{
     console.log(`\\n🔧 开始处理已有航段（执行）：机号 ${{plan["飞机注册号"]}}`);
-    const execBtn = row.querySelector('.icon-qidong, [class*="icon-qidong"]');
+    // 多种方式尝试查找“执行”按钮
+    let execBtn = row.querySelector('.icon-qidong, [class*="icon-qidong"]');
+    if (!execBtn) {{
+        // 尝试通过文本查找
+        const btns = row.querySelectorAll('button, a, div');
+        for (let btn of btns) {{
+            if (btn.innerText && (btn.innerText.includes('执行') || btn.innerText.includes('启动'))) {{
+                execBtn = btn;
+                break;
+            }}
+        }}
+    }}
     if (!execBtn) {{ console.error('❌ 未找到“执行”按钮，跳过'); return false; }}
     console.log('🔘 点击“执行”按钮...');
     execBtn.click();
@@ -1023,9 +1041,19 @@ async function runDailyPlans() {{
                 console.error(`新增备案失败，跳过该计划`);
                 continue;
             }}
-            // 等待列表页刷新，重新匹配刚添加的记录
-            await sleep(3000); // 额外等待确保新记录加载
-            matchedRow = await tryMatchPlan(plan);
+            // 等待列表页刷新，重新匹配刚添加的记录，增加等待时间并重试多次
+            let retry = 0;
+            let matched = false;
+            while (retry < 5 && !matched) {{
+                await sleep(3000);
+                matchedRow = await tryMatchPlan(plan);
+                if (matchedRow) {{
+                    matched = true;
+                    break;
+                }}
+                retry++;
+                console.log(`重试匹配第 ${{retry}} 次...`);
+            }}
             if (matchedRow) {{
                 console.log(`✅ 新增备案成功，现在执行表单填写`);
                 success = await processExistingPlan(matchedRow, plan);
