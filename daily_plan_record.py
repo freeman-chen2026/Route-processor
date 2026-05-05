@@ -17,14 +17,14 @@ AIRCRAFT_TYPE_MAP = {
     "B658L": "GLF6",
     "B8105": "GLEX",
     "B8160": "GLF5",
-    "B8309": "GLF5",   # 新增
+    "B8309": "GLF5",
 }
 
 def get_aircraft_type(reg: str) -> str:
     for key, value in AIRCRAFT_TYPE_MAP.items():
         if reg.startswith(key):
             return value
-    return "GLF4"  # 默认
+    return "GLF4"
 
 uploaded_file = st.file_uploader("选择 Excel 文件（.xlsx）", type=["xlsx"])
 
@@ -54,7 +54,6 @@ if uploaded_file is not None:
         display_cols.insert(1, "航班号")
     st.dataframe(df_filtered[display_cols])
 
-    # 准备数据供 JavaScript 使用
     records = df_filtered.to_dict(orient="records")
     for rec in records:
         rec.pop("出发日期_obj", None)
@@ -259,7 +258,7 @@ async function fillAndWait(plan) {{
 """
 
     st.subheader("📜 生成的 JavaScript 脚本")
-    # 使用普通 pre/code 避免动态导入错误
+    # 使用 pre 避免动态导入错误
     st.markdown(f"<div style='background:#f0f2f6;padding:1rem;border-radius:0.5rem;overflow-x:auto;font-family:monospace;font-size:0.9rem;'><pre>{script}</pre></div>", unsafe_allow_html=True)
     st.info("复制以上代码，在目标网页（当日/次日计划列表页）按 F12 打开控制台，粘贴并回车执行。脚本将自动比对并填写未备案的计划，每填完一条后等待您手动点击“保存”，然后继续下一条。")
     st.download_button(
