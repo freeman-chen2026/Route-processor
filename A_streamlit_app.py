@@ -161,7 +161,6 @@ DEFAULT_DETAIL_MAP = {
     "上海虹桥": {"province": "上海", "district": "闵行区"},
     "上海浦东": {"province": "上海", "district": "浦东新区"},
     "重庆江北": {"province": "重庆", "district": "江北区"},
-    # 以下为通用映射，实际会通过 build_city_mappings 自动补充
 }
 
 def parse_flight_time(time_str):
@@ -174,17 +173,21 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def extract_country(city_name):
+    # 1. 先尝试通过缩写映射（优先级高）
     parts = re.split(r'[\s\-]', city_name)
     if parts:
         first_part = parts[0]
         if first_part in ABBR_TO_COUNTRY:
             return ABBR_TO_COUNTRY[first_part]
+    # 2. 如果是台湾城市，直接返回台湾
     for tw_city in TAIWAN_CITIES:
         if tw_city in city_name:
             return "台湾"
+    # 3. 再尝试完整匹配国家名
     for country in COUNTRIES:
         if country in city_name:
             return country
+    # 4. 否则返回第一个词
     if parts:
         return parts[0]
     return city_name
@@ -216,6 +219,7 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
+        # 台湾城市直接映射到台湾，不加入 detail_map
         if any(tw in city for tw in TAIWAN_CITIES):
             city_map[city] = "台湾"
             continue
@@ -232,6 +236,7 @@ def build_city_mappings(df, custom_detail_map):
             detail_map[city] = {"province": province, "district": district}
             city_map[city] = province
         else:
+            # 境外城市：使用标准化后的国家名称
             country = extract_country(city)
             city_map[city] = country
 
@@ -586,10 +591,8 @@ async function handleAirportBlock(blockIndex, city, label) {{
     const info = getLocationInfo(city);
     if (info.zone === "境内") {{
         console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
-        // 先尝试直接用 city 匹配
         let selected = await setSelectValue(secondSelect, city);
         if (!selected) {{
-            // 如果失败，尝试从详细映射中获取区县名
             const detail = CITY_DETAIL_MAP[city];
             if (detail && detail.district) {{
                 console.log(`尝试使用区县名 "${{detail.district}}" 进行匹配...`);
@@ -762,6 +765,8 @@ async function tryMatchPlan(plan) {{
     const dateTarget = plan["出发日期"];
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
+    // 获取计划中到达城市的国家/地区名（用于境外匹配）
+    const arrCountry = getLocationInfo(arrCity).region;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -777,7 +782,14 @@ async function tryMatchPlan(plan) {{
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
         const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
-        const arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
+        // 到达匹配：使用国家名比较（如果是境外），否则用城市名包含
+        let arrMatch = false;
+        if (arrCountry !== undefined && arrCountry !== plan["到达城市"]) {{
+            // 境外：用国家名匹配
+            arrMatch = kw.arrKeywords.some(kw => arrCountry.includes(kw));
+        }} else {{
+            arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
+        }}
         if (depMatch && arrMatch) {{
             return row;
         }}
@@ -795,6 +807,11 @@ async function processExistingPlan(row, plan) {{
                 execBtn = btn;
                 break;
             }}
+        }}
+        // 额外尝试通过 XPath 查找执行按钮
+        if (!execBtn) {{
+            const doc = await getMainDoc();
+            execBtn = doc.evaluate('//button[contains(text(), "执行")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         }}
     }}
     if (!execBtn) {{ console.error('❌ 未找到“执行”按钮，跳过'); return false; }}
@@ -994,7 +1011,7 @@ async function processNewPlan(plan) {{
         }}
         console.log('等待返回列表页...');
         await waitForElement('input.query.yuanjiao', 15000, false);
-        console.log(`新增备案完成：${{plan["飞机注册号"]}}`);
+        console.log(`✅ 新增备案并填写完成：${{plan["飞机注册号"]}}`);
     }} else {{
         console.warn('未找到提交按钮');
         return false;
@@ -1021,31 +1038,8 @@ async function runDailyPlans() {{
             console.log(`✅ 匹配到已有航段，直接执行表单填写`);
             success = await processExistingPlan(matchedRow, plan);
         }} else {{
-            console.log(`⚠️ 未匹配到已有航段，先执行新增备案，再执行表单填写`);
-            const addSuccess = await processNewPlan(plan);
-            if (!addSuccess) {{
-                console.error(`新增备案失败，跳过该计划`);
-                continue;
-            }}
-            let retry = 0;
-            let matched = false;
-            while (retry < 5 && !matched) {{
-                await sleep(3000);
-                matchedRow = await tryMatchPlan(plan);
-                if (matchedRow) {{
-                    matched = true;
-                    break;
-                }}
-                retry++;
-                console.log(`重试匹配第 ${{retry}} 次...`);
-            }}
-            if (matchedRow) {{
-                console.log(`✅ 新增备案成功，现在执行表单填写`);
-                success = await processExistingPlan(matchedRow, plan);
-            }} else {{
-                console.error(`❌ 新增备案后仍未匹配到记录，可能添加失败，跳过`);
-                success = false;
-            }}
+            console.log(`⚠️ 未匹配到已有航段，执行新增备案（将自动填写并提交）`);
+            success = await processNewPlan(plan);
         }}
         if (!success) {{
             console.error(`⚠️ 第 ${{processedCount}} 个计划处理失败，尝试继续下一个...`);
