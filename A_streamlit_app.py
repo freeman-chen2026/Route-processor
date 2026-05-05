@@ -322,8 +322,10 @@ function setNumberInput(inputEl, value) {{
 }}
 
 const CITY_MAP_RAW = {city_map_json};
-const CITY_MAP = {{
+// 强制修正已知印尼城市映射
+const CITY_MAP_CORRECTED = {{
     ...CITY_MAP_RAW,
+    "印尼雅加达哈林": "印度尼西亚",
     "印尼巴厘岛": "印度尼西亚",
     "台北松山": "台湾",
     "台北桃园": "台湾",
@@ -337,6 +339,7 @@ const CITY_MAP = {{
     "金门": "台湾",
     "马祖": "台湾"
 }};
+const CITY_MAP = CITY_MAP_CORRECTED;
 const DOMESTIC_KEYWORDS = {domestic_keywords_json};
 
 function getLocationInfo(city) {{
@@ -766,7 +769,8 @@ async function tryMatchPlan(plan) {{
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
     // 获取计划中到达城市的国家/地区名（用于境外匹配）
-    const arrCountry = getLocationInfo(arrCity).region;
+    const arrInfo = getLocationInfo(arrCity);
+    const arrCountry = arrInfo.region;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -782,13 +786,18 @@ async function tryMatchPlan(plan) {{
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
         const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
-        // 到达匹配：使用国家名比较（如果是境外），否则用城市名包含
         let arrMatch = false;
-        if (arrCountry !== undefined && arrCountry !== plan["到达城市"]) {{
+        if (arrInfo.zone === "境内") {{
+            // 境内：用城市名本身或区县名匹配
+            const district = CITY_DETAIL_MAP[arrCity]?.district;
+            if (district && kw.arrKeywords.some(kw => district.includes(kw))) {{
+                arrMatch = true;
+            }} else {{
+                arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
+            }}
+        }} else {{
             // 境外：用国家名匹配
             arrMatch = kw.arrKeywords.some(kw => arrCountry.includes(kw));
-        }} else {{
-            arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
         }}
         if (depMatch && arrMatch) {{
             return row;
@@ -808,7 +817,6 @@ async function processExistingPlan(row, plan) {{
                 break;
             }}
         }}
-        // 额外尝试通过 XPath 查找执行按钮
         if (!execBtn) {{
             const doc = await getMainDoc();
             execBtn = doc.evaluate('//button[contains(text(), "执行")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
