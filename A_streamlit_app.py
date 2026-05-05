@@ -161,6 +161,7 @@ DEFAULT_DETAIL_MAP = {
     "上海虹桥": {"province": "上海", "district": "闵行区"},
     "上海浦东": {"province": "上海", "district": "浦东新区"},
     "重庆江北": {"province": "重庆", "district": "江北区"},
+    # 以下为通用映射，实际会通过 build_city_mappings 自动补充
 }
 
 def parse_flight_time(time_str):
@@ -173,21 +174,17 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def extract_country(city_name):
-    # 1. 先尝试通过缩写映射（优先级高）
     parts = re.split(r'[\s\-]', city_name)
     if parts:
         first_part = parts[0]
         if first_part in ABBR_TO_COUNTRY:
             return ABBR_TO_COUNTRY[first_part]
-    # 2. 如果是台湾城市，直接返回台湾
     for tw_city in TAIWAN_CITIES:
         if tw_city in city_name:
             return "台湾"
-    # 3. 再尝试完整匹配国家名
     for country in COUNTRIES:
         if country in city_name:
             return country
-    # 4. 否则返回第一个词
     if parts:
         return parts[0]
     return city_name
@@ -219,7 +216,6 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
-        # 台湾城市直接映射到台湾，不加入 detail_map
         if any(tw in city for tw in TAIWAN_CITIES):
             city_map[city] = "台湾"
             continue
@@ -236,14 +232,12 @@ def build_city_mappings(df, custom_detail_map):
             detail_map[city] = {"province": province, "district": district}
             city_map[city] = province
         else:
-            # 境外城市：使用标准化后的国家名称
             country = extract_country(city)
             city_map[city] = country
 
     return city_map, detail_map
 
 def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json):
-    """生成公共辅助函数脚本，包含所有页面自动化所需的通用函数"""
     return f"""
 // ================= 公共辅助函数（基础脚本） =================
 // 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -265,7 +259,6 @@ async function getMainDoc() {{
     return doc;
 }}
 
-// 修改 waitForElement 函数，默认按 XPath 处理，支持 CSS 选择器通过第三个参数 false
 async function waitForElement(selector, timeout = 15000, isXPath = true) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
@@ -323,9 +316,7 @@ function setNumberInput(inputEl, value) {{
     return true;
 }}
 
-// 以下为动态生成的城市和国家映射
 const CITY_MAP_RAW = {city_map_json};
-// 对 CITY_MAP 进行后处理，确保台湾城市和“印尼巴厘岛”映射到正确的国家
 const CITY_MAP = {{
     ...CITY_MAP_RAW,
     "印尼巴厘岛": "印度尼西亚",
@@ -366,7 +357,6 @@ function getLocationInfo(city) {{
     }}
 }}
 
-// ========== 当日和次日计划通用的表单填写函数 ==========
 const CITY_DETAIL_MAP = {detail_map_json};
 
 async function fillSegmentSelects(container, city) {{
@@ -575,7 +565,6 @@ async function waitForDialogConfirmButton(timeout = 15000) {{
     return null;
 }}
 
-// ========== 当日计划专用的表单操作函数（执行航段等） ==========
 async function handleAirportBlock(blockIndex, city, label) {{
     let firstSelectXPath, secondSelectXPath;
     if (blockIndex === 1) {{
@@ -590,13 +579,27 @@ async function handleAirportBlock(blockIndex, city, label) {{
     if (!firstSelect) {{ console.error(`❌ 未找到 ${{label}} 第一个选择框`); return false; }}
     const targetValue = blockIndex === 1 ? '起飞机场' : '降落机场';
     await setSelectValue(firstSelect, targetValue);
+    
     const secondSelect = await waitForElement(secondSelectXPath, 10000);
     if (!secondSelect) {{ console.error(`❌ 未找到 ${{label}} 第二个选择框`); return false; }}
+    
     const info = getLocationInfo(city);
     if (info.zone === "境内") {{
         console.log(`🛬 ${{label}} 境内机场: ${{city}}，尝试选择匹配的机场...`);
-        const selected = await setSelectValue(secondSelect, city);
-        if (!selected) {{ console.error(`❌ 未找到匹配的机场选项`); return false; }}
+        // 先尝试直接用 city 匹配
+        let selected = await setSelectValue(secondSelect, city);
+        if (!selected) {{
+            // 如果失败，尝试从详细映射中获取区县名
+            const detail = CITY_DETAIL_MAP[city];
+            if (detail && detail.district) {{
+                console.log(`尝试使用区县名 "${{detail.district}}" 进行匹配...`);
+                selected = await setSelectValue(secondSelect, detail.district);
+            }}
+        }}
+        if (!selected) {{
+            console.error(`❌ 未找到匹配的机场选项 (尝试了 "${{city}}" 和区县名)`);
+            return false;
+        }}
         return true;
     }} else {{
         console.log(`🛫 ${{label}} 境外机场: ${{city}}，选择“其它”...`);
@@ -676,7 +679,6 @@ async function waitForReturnToList(timeout = 300000) {{
 }}
 
 async function ensureListPage() {{
-    // CSS 选择器调用需传递 false
     const btn = await waitForElement('input.query.yuanjiao', 15000, false);
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
@@ -706,7 +708,6 @@ def generate_daily_script(records, city_map_json, detail_map_json, domestic_keyw
 // 当日待处理计划数: {len(records)}
 // =========================================================
 
-// ================= 配置区 =================
 const IFRAME_ID = 'main';
 const ROW_SELECTOR = 'table tbody:nth-of-type(2) tr';
 const REG_SELECTOR = 'td:nth-child(6) div';
@@ -735,13 +736,11 @@ async function waitForTable() {{
     return null;
 }}
 
-// 改进的匹配函数：从航段文本中提取出发和到达城市关键词（支持“境外-台湾”等格式）
 function extractCityKeywords(segText) {{
     let parts = segText.split(',');
     if (parts.length < 2) return null;
     let depPart = parts[0].trim();
     let arrPart = parts[1].trim();
-    // 去除“境内-”或“境外-”前缀
     depPart = depPart.replace(/^(境内|境外)-/, '');
     arrPart = arrPart.replace(/^(境内|境外)-/, '');
     let extract = (part) => {{
@@ -756,7 +755,6 @@ function extractCityKeywords(segText) {{
     return {{ depKeywords: extract(depPart), arrKeywords: extract(arrPart) }};
 }}
 
-// 尝试匹配网页上的计划行，返回匹配的行对象，否则返回 null
 async function tryMatchPlan(plan) {{
     const rows = await waitForTable();
     if (!rows) return null;
@@ -787,13 +785,10 @@ async function tryMatchPlan(plan) {{
     return null;
 }}
 
-// 执行已有航段的填写（点击执行按钮）
 async function processExistingPlan(row, plan) {{
     console.log(`\\n🔧 开始处理已有航段（执行）：机号 ${{plan["飞机注册号"]}}`);
-    // 多种方式尝试查找“执行”按钮
     let execBtn = row.querySelector('.icon-qidong, [class*="icon-qidong"]');
     if (!execBtn) {{
-        // 尝试通过文本查找
         const btns = row.querySelectorAll('button, a, div');
         for (let btn of btns) {{
             if (btn.innerText && (btn.innerText.includes('执行') || btn.innerText.includes('启动'))) {{
@@ -857,7 +852,6 @@ async function processExistingPlan(row, plan) {{
     return true;
 }}
 
-// 执行新增备案（类似次日计划，但使用当日数据）
 async function processNewPlan(plan) {{
     console.log(`\\n🔧 开始处理新增备案（当日未匹配）：机号 ${{plan["飞机注册号"]}}`);
 
@@ -900,7 +894,6 @@ async function processNewPlan(plan) {{
     if (operateSelect) await setSelectValue(operateSelect, "否");
     else console.warn('未找到是否经营性作业 select');
 
-    // 用途：根据计划中的用途字段决定
     let purpose = "自用飞行";
     const purposeRaw = plan["用途"] || "";
     if (purposeRaw.includes("维修") || purposeRaw.includes("调机")) {{
@@ -918,7 +911,6 @@ async function processNewPlan(plan) {{
     else console.warn('未找到服务结束日期输入框');
 
     await fillFirstSegmentSelects(plan["出发城市"]);
-    // 飞行时间使用实际飞行时间（如果有）或预计飞行时间
     let flightTime = plan["实际飞行时间"];
     if (!flightTime) flightTime = plan["预计飞行时间"];
     let hours = 0, minutes = 0;
@@ -927,10 +919,7 @@ async function processNewPlan(plan) {{
         hours = parseInt(parts[0]);
         minutes = parseInt(parts[1]);
     }}
-    const record = {{
-        flight_hours: hours,
-        flight_minutes: minutes
-    }};
+    const record = {{ flight_hours: hours, flight_minutes: minutes }};
     await fillFirstSegmentTime(record);
 
     const addSegmentBtn = await waitForElement('/html/body/div[1]/div/div[3]/div/div[2]/form/div[23]/div[1]/div[1]/div/div/button', 5000, true);
@@ -1014,7 +1003,6 @@ async function processNewPlan(plan) {{
     return true;
 }}
 
-// 当日计划主流程：遍历所有当日记录，先尝试匹配，匹配成功则执行填写，否则先新增备案，再执行填写
 async function runDailyPlans() {{
     console.log('🚀 开始执行当日计划自动化流程...');
     let processedCount = 0;
@@ -1027,7 +1015,6 @@ async function runDailyPlans() {{
         processedCount++;
         console.log(`\\n========== 处理第 ${{processedCount}} 个当日计划 ==========`);
 
-        // 尝试匹配网页上的计划行
         let matchedRow = await tryMatchPlan(plan);
         let success = false;
         if (matchedRow) {{
@@ -1035,13 +1022,11 @@ async function runDailyPlans() {{
             success = await processExistingPlan(matchedRow, plan);
         }} else {{
             console.log(`⚠️ 未匹配到已有航段，先执行新增备案，再执行表单填写`);
-            // 先新增备案（添加经营活动信息）
             const addSuccess = await processNewPlan(plan);
             if (!addSuccess) {{
                 console.error(`新增备案失败，跳过该计划`);
                 continue;
             }}
-            // 等待列表页刷新，重新匹配刚添加的记录，增加等待时间并重试多次
             let retry = 0;
             let matched = false;
             while (retry < 5 && !matched) {{
@@ -1218,7 +1203,6 @@ async function processNextDayRecord(record) {{
     return true;
 }}
 
-// 次日计划主流程
 async function runNextDayPlans() {{
     const flightRecords = {flight_records_json};
     console.log(`🚀 开始执行次日计划自动化流程，共 ${{flightRecords.length}} 条计划...`);
@@ -1260,7 +1244,6 @@ if uploaded_file is not None:
             st.error(f"❌ 缺少必要列: {missing}")
             st.info(f"实际列名: {list(df.columns)}")
         else:
-            # 分离当日计划（有实际到达时间）和次日计划（出发日期为明天）
             df_daily = df[df["实际到达"].notna() & (df["实际到达"].astype(str).str.strip() != "")].copy()
             df['出发日期'] = pd.to_datetime(df['出发日期']).dt.date
             today = date.today()
@@ -1271,21 +1254,18 @@ if uploaded_file is not None:
             if len(df_daily) == 0 and len(df_nextday) == 0:
                 st.warning("没有需要处理的计划。")
             else:
-                # 构建城市映射（基于全部数据，确保映射完整）
                 custom_detail_map = {}
                 city_map, detail_map = build_city_mappings(df, custom_detail_map)
                 city_map_json = json.dumps(city_map, ensure_ascii=False, indent=4)
                 detail_map_json = json.dumps(detail_map, ensure_ascii=False, indent=4)
                 domestic_keywords_json = json.dumps(DOMESTIC_KEYWORDS)
 
-                # 生成当日计划数据
                 daily_records = df_daily.to_dict(orient="records")
                 for rec in daily_records:
                     for k, v in rec.items():
                         if pd.isna(v):
                             rec[k] = ""
 
-                # 生成次日计划数据
                 nextday_records = []
                 for _, row in df_nextday.iterrows():
                     purpose_raw = row.get("用途", "")
@@ -1311,17 +1291,11 @@ if uploaded_file is not None:
                         "flight_minutes": minutes
                     })
 
-                # 生成基础脚本（公共辅助函数）
                 base_script = generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
-
-                # 生成当日脚本（专用函数）
                 daily_script = generate_daily_script(daily_records, city_map_json, detail_map_json, domestic_keywords_json) if len(daily_records) > 0 else ""
-                # 生成次日脚本（专用函数）
                 nextday_script = generate_nextday_script(nextday_records, city_map_json, detail_map_json, domestic_keywords_json) if len(nextday_records) > 0 else ""
 
-                # 组合最终脚本
                 final_script = base_script + "\n\n" + daily_script + "\n\n" + nextday_script + """
-// ================= 主入口：先执行当日计划，再执行次日计划 =================
 (async () => {
     console.log("========== 开始执行综合流程 ==========");
     if (typeof runDailyPlans === 'function') {
