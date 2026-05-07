@@ -35,22 +35,16 @@ def map_reg_to_model(reg):
     }
     return mapping.get(reg, "GLF4")  # 默认GLF4
 
-# ---------- 生成完整脚本 ----------
+# ---------- 生成完整脚本（使用 .format 避免 f-string 大括号冲突） ----------
 def generate_full_script(records):
-    """
-    records: list of dict, 每条包含:
-        - reg: 飞机注册号
-        - dep_date: 出发日期（字符串 YYYY-MM-DD）
-        - dep_airport: 出发地（四字码，如ZGSZ）
-        - arr_airport: 到达地（四字码）
-        - purpose: 用途（用于判断任务性质）
-    """
     records_json = json.dumps(records, ensure_ascii=False, indent=4)
-    
-    script = f"""
+    num_records = len(records)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    template = """
 // ================= 次日计划自动录入脚本 =================
-// 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-// 待处理计划数: {len(records)}
+// 生成时间: {now_str}
+// 待处理计划数: {num_records}
 // ======================================================
 
 // ----------------------------- 公共辅助函数 ---------------------------------
@@ -127,7 +121,7 @@ async function selectDropdownOption(selectEl, targetText) {{
         return true;
     }}
     return false;
-}
+}}
 
 // ----------------------------- 配置区（可根据实际页面微调XPath） ---------------------------------
 // 注意：以下XPath基于您提供的典型页面结构，如页面有变化可手动调整
@@ -334,15 +328,14 @@ async function runAutoEntry() {{
             console.error(`❌ 第 ${{i+1}} 条处理失败，终止后续执行`);
             break;
         }}
-        await sleep(1000); // 间隔一秒，避免过快
+        await sleep(1000);
     }}
     console.log("🎉 所有次日计划处理完毕！");
 }}
 
-// 启动
 runAutoEntry();
 """
-    return script
+    return template.format(now_str=now_str, num_records=num_records, records_json=records_json)
 
 # ---------- Streamlit 主逻辑 ----------
 if uploaded_file is not None:
