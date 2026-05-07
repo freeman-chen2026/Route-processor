@@ -1,324 +1,343 @@
 import streamlit as st
 import pandas as pd
-import json
-from datetime import datetime, timedelta
+import time
+from typing import List, Dict, Tuple
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
+import datetime
 import re
+import os
+import json
 
-st.set_page_config(page_title="当日/次日计划备案脚本生成器", layout="wide")
-st.title("✈️ 当日/次日国内计划备案脚本生成器")
-st.markdown("上传每日导出的 Excel 文件，自动生成浏览器控制台脚本，用于批量备案未匹配的当日/次日计划。")
+# ---------- 页面配置 ----------
+st.set_page_config(page_title="飞行计划备案自动化工具", layout="wide")
+st.title("✈️ 飞行计划备案自动化助手")
 
-# 机型映射规则（根据注册号前缀）
-AIRCRAFT_TYPE_MAP = {
-    "B652Q": "GLF4",
-    "B652R": "GLF4",
-    "B652S": "GLF4",
-    "B8262": "GLF4",
-    "B3926": "LJ60",
-    "B658L": "GLF6",
-    "B8105": "GLEX",
-    "B8160": "GLF5",
-    "B8309": "GLF5",
-}
+# ---------- 辅助函数 ----------
+def date_format_for_compare(excel_date):
+    """将Excel中的日期 '2026-04-04' 转换为 '20260404' 用于网页匹配"""
+    if isinstance(excel_date, str):
+        return excel_date.replace('-', '')
+    elif isinstance(excel_date, (datetime.date, pd.Timestamp)):
+        return excel_date.strftime('%Y%m%d')
+    else:
+        return str(excel_date).replace('-', '')
 
 def get_aircraft_type(reg: str) -> str:
-    for key, value in AIRCRAFT_TYPE_MAP.items():
-        if reg.startswith(key):
-            return value
-    return "GLF4"  # 默认
+    """根据飞机注册号返回机型（用于弹框中的机型字段）"""
+    mapping = {
+        "B652Q": "GLF4", "B652R": "GLF4", "B652S": "GLF4", "B8262": "GLF4",
+        "B3926": "LJ60",
+        "B658L": "GLF6",
+        "B8105": "GLEX",
+        "B8160": "GLF5"
+    }
+    return mapping.get(reg, "GLF4")   # 默认GLF4
 
-uploaded_file = st.file_uploader("选择 Excel 文件（.xlsx）", type=["xlsx"])
+def get_task_type(purpose: str) -> str:
+    """根据用途列决定任务性质"""
+    if purpose in ["调机", "维修"]:
+        return "调机飞行"
+    else:
+        return "公务飞行"
 
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
-    st.success(f"文件加载成功，共 {len(df)} 条记录")
+# ---------- Selenium 管理器 ----------
+class FlightPlanAutomation:
+    def __init__(self, headless=False, debugger_address=None):
+        self.driver = None
+        self.headless = headless
+        self.debugger_address = debugger_address
 
-    required_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
-    missing = [col for col in required_cols if col not in df.columns]
+    def connect(self):
+        """启动或连接浏览器"""
+        chrome_options = Options()
+        if self.headless:
+            chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+
+        if self.debugger_address:
+            # 连接已存在的Chrome调试端口 (远程调试模式，保留登录态)
+            chrome_options.add_experimental_option("debuggerAddress", self.debugger_address)
+            self.driver = webdriver.Chrome(options=chrome_options)
+            st.info(f"已连接到远程调试浏览器 (地址: {self.debugger_address})")
+        else:
+            # 普通模式，自动管理驱动
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            st.info("已启动新的Chrome浏览器窗口，请手动完成登录后点击「继续」按钮")
+            # 等待用户手动登录
+            if st.button("✅ 我已登录完成，继续执行"):
+                st.session_state.continue_flag = True
+            # 通过会话状态阻塞
+            while not st.session_state.get("continue_flag", False):
+                time.sleep(0.5)
+            st.session_state.continue_flag = False
+
+    def get_existing_plans(self, url: str, row_xpath: str, cells_map: Dict[str, int]) -> List[Tuple]:
+        """
+        抓取网页表格中的已有计划
+        row_xpath: 定位每一行的XPath (例如 "//table/tbody/tr")
+        cells_map: 列索引映射 {'exec_date': 10, 'reg': 8, 'dep': 11, 'arr': 14} (从1开始)
+        返回 [(exec_date_yyyymmdd, reg, dep, arr), ...]
+        """
+        self.driver.get(url)
+        wait = WebDriverWait(self.driver, 20)
+        wait.until(EC.presence_of_element_located((By.XPATH, row_xpath)))
+        rows = self.driver.find_elements(By.XPATH, row_xpath)
+        plans = []
+        for row in rows:
+            try:
+                # 获取各单元格相对当前行的XPath
+                exec_date_elem = row.find_element(By.XPATH, f"./td[{cells_map['exec_date']}]/div")
+                reg_elem = row.find_element(By.XPATH, f"./td[{cells_map['reg']}]/div")
+                dep_elem = row.find_element(By.XPATH, f"./td[{cells_map['dep']}]/div")
+                arr_elem = row.find_element(By.XPATH, f"./td[{cells_map['arr']}]/div")
+                exec_date = exec_date_elem.text.strip()
+                reg = reg_elem.text.strip()
+                dep = dep_elem.text.strip()
+                arr = arr_elem.text.strip()
+                if exec_date and reg and dep and arr:
+                    plans.append((exec_date, reg, dep, arr))
+            except Exception as e:
+                # 跳过解析失败的行
+                continue
+        return plans
+
+    def add_new_plan(self, plan: Dict, xpath_config: Dict) -> bool:
+        """
+        新增一条飞行计划
+        plan: 包含以下字段
+            - reg: 注册号
+            - exec_date: 出发日期 (原始格式 '2026-04-04')
+            - dep: 出发地
+            - arr: 到达地
+            - purpose: 用途
+        xpath_config: 弹框中各类元素的Xpath映射
+        """
+        try:
+            # 点击新增按钮
+            add_btn = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, xpath_config['add_button']))
+            )
+            add_btn.click()
+            time.sleep(1)
+
+            # 1. 机型
+            ac_type = get_aircraft_type(plan['reg'])
+            ac_type_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, xpath_config['ac_type']))
+            )
+            ac_type_input.clear()
+            ac_type_input.send_keys(ac_type)
+
+            # 2. 执行日期
+            date_input = self.driver.find_element(By.XPATH, xpath_config['exec_date_input'])
+            # 尝试直接输入值（兼容多种日期控件）
+            date_input.clear()
+            date_input.send_keys(plan['exec_date'])
+            # 可选：触发change事件
+            self.driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", date_input)
+            time.sleep(0.5)
+
+            # 3. 异地运行 -> 是
+            remote_op = self.driver.find_element(By.XPATH, xpath_config['remote_run'])
+            remote_op.click()
+            # 展开下拉框后选择"是"
+            is_option = WebDriverWait(self.driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, xpath_config['remote_yes_option']))
+            )
+            is_option.click()
+
+            # 4. 任务性质
+            task_type = get_task_type(plan['purpose'])
+            task_input = self.driver.find_element(By.XPATH, xpath_config['task_type'])
+            task_input.click()
+            # 如果是可编辑下拉框，直接输入文本
+            task_input.send_keys(task_type)
+            # 可选点击回车或下拉选项
+            # 部分系统需要从下拉列表选择，这里简化处理：输入后按回车
+            task_input.send_keys("\n")
+
+            # 5. 两个注册号字段
+            reg_field1 = self.driver.find_element(By.XPATH, xpath_config['reg_field1'])
+            reg_field1.clear()
+            reg_field1.send_keys(plan['reg'])
+
+            reg_field2 = self.driver.find_element(By.XPATH, xpath_config['reg_field2'])
+            reg_field2.clear()
+            reg_field2.send_keys(plan['reg'])
+
+            # 6. 起飞机场
+            dep_input = self.driver.find_element(By.XPATH, xpath_config['departure'])
+            dep_input.clear()
+            dep_input.send_keys(plan['dep'])
+
+            # 7. 落地机场
+            arr_input = self.driver.find_element(By.XPATH, xpath_config['arrival'])
+            arr_input.clear()
+            arr_input.send_keys(plan['arr'])
+
+            # 8. 保存
+            save_btn = self.driver.find_element(By.XPATH, xpath_config['save_button'])
+            save_btn.click()
+            time.sleep(1)
+
+            # 尝试关闭可能的成功提示
+            try:
+                close_btn = self.driver.find_element(By.XPATH, "//button[contains(text(),'关闭') or contains(text(),'确定')]")
+                close_btn.click()
+            except:
+                pass
+            return True
+        except Exception as e:
+            st.error(f"计划 {plan['reg']} {plan['exec_date']} 备案失败: {str(e)}")
+            return False
+
+    def close(self):
+        if self.driver:
+            self.driver.quit()
+
+# ---------- Streamlit 界面 ----------
+st.sidebar.header("🔧 配置面板")
+
+# 浏览器连接设置
+use_remote = st.sidebar.checkbox("使用已登录的远程浏览器 (推荐)", value=True, help="若勾选，请先手动用Chrome打开目标网站并登录，然后以远程调试模式启动Chrome")
+remote_addr = st.sidebar.text_input("远程调试地址", value="localhost:9222", disabled=not use_remote)
+headless_mode = st.sidebar.checkbox("无头模式 (不可见浏览器)", value=False)
+
+# 目标网页URL
+page_url = st.sidebar.text_input("目标网页URL（计划列表页）", value="http://your-inner-system.com/plan/list")
+
+# 表格解析配置 (抓取现有计划)
+st.sidebar.subheader("📋 现有计划表格配置")
+row_xpath = st.sidebar.text_input("表格行XPath", value="//table/tbody/tr")
+col_exec_date = st.sidebar.number_input("执行日列号(从1开始)", min_value=1, value=10)
+col_reg = st.sidebar.number_input("注册号列号", min_value=1, value=8)
+col_dep = st.sidebar.number_input("起飞机场列号", min_value=1, value=11)
+col_arr = st.sidebar.number_input("落地机场列号", min_value=1, value=14)
+cells_map = {'exec_date': col_exec_date, 'reg': col_reg, 'dep': col_dep, 'arr': col_arr}
+
+# 新增弹窗配置
+st.sidebar.subheader("➕ 新增弹窗元素定位（XPath）")
+add_btn_xpath = st.sidebar.text_input("「新增」按钮XPath", value="//a[contains(@class,'add')]/span[2]")
+ac_type_xpath = st.sidebar.text_input("机型输入框XPath", value="//div[@class='modal']//input[@placeholder='机型']")
+exec_date_input_xpath = st.sidebar.text_input("执行日期输入框XPath", value="//div[@class='modal']//input[@placeholder='执行日期']")
+remote_run_xpath = st.sidebar.text_input("异地运行下拉框XPath", value="//span[contains(text(),'异地运行')]/following::span[1]")
+remote_yes_option_xpath = st.sidebar.text_input("异地运行「是」选项XPath", value="//li[text()='是']")
+task_type_xpath = st.sidebar.text_input("任务性质输入框XPath", value="//div[@class='modal']//input[@placeholder='任务性质']")
+reg_field1_xpath = st.sidebar.text_input("注册号字段1 XPath", value="//div[@class='modal']//ul[1]/li[8]/span")
+reg_field2_xpath = st.sidebar.text_input("注册号字段2 XPath", value="//div[@class='modal']//ul[1]/li[10]/span/span/input")
+departure_xpath = st.sidebar.text_input("起飞机场输入框XPath", value="//div[@class='modal']//input[@placeholder='起飞机场']")
+arrival_xpath = st.sidebar.text_input("落地机场输入框XPath", value="//div[@class='modal']//input[@placeholder='落地机场']")
+save_btn_xpath = st.sidebar.text_input("保存按钮XPath", value="//button[contains(text(),'保存')]")
+
+xpath_config = {
+    'add_button': add_btn_xpath,
+    'ac_type': ac_type_xpath,
+    'exec_date_input': exec_date_input_xpath,
+    'remote_run': remote_run_xpath,
+    'remote_yes_option': remote_yes_option_xpath,
+    'task_type': task_type_xpath,
+    'reg_field1': reg_field1_xpath,
+    'reg_field2': reg_field2_xpath,
+    'departure': departure_xpath,
+    'arrival': arrival_xpath,
+    'save_button': save_btn_xpath
+}
+
+# 上传Excel
+uploaded_file = st.file_uploader("📂 上传飞行计划Excel文件", type=["xlsx", "xls"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.subheader("📊 Excel解析结果")
+    st.dataframe(df.head(20))
+    required_cols = ['出发日期', '飞机注册号', '出发地', '到达地', '用途']
+    missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        st.error(f"Excel 缺少以下列: {missing}")
+        st.error(f"Excel缺少必需列: {missing}，请确保包含 {required_cols}")
         st.stop()
+    # 提取计划
+    excel_plans = []
+    for _, row in df.iterrows():
+        plan = {
+            'exec_date': str(row['出发日期']).split()[0],   # 取日期部分
+            'reg': row['飞机注册号'].strip(),
+            'dep': row['出发地'].strip(),
+            'arr': row['到达地'].strip(),
+            'purpose': row['用途'].strip()
+        }
+        excel_plans.append(plan)
+    st.success(f"读取到 {len(excel_plans)} 条飞行计划")
 
-    today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
+    # 执行自动化
+    if st.button("🚀 开始匹配与自动备案"):
+        # 初始化会话状态中的继续标志
+        if 'continue_flag' not in st.session_state:
+            st.session_state.continue_flag = False
 
-    df["出发日期_obj"] = pd.to_datetime(df["出发日期"], errors='coerce')
-    df_filtered = df[df["出发日期_obj"].dt.date.isin([today, tomorrow])].copy()
-    if df_filtered.empty:
-        st.warning("没有找到当日或次日的飞行计划。")
-        st.stop()
+        auto = FlightPlanAutomation(headless=headless_mode, debugger_address=remote_addr if use_remote else None)
+        try:
+            auto.connect()
+            # 1. 抓取现有计划
+            with st.spinner("正在抓取网页中的已有计划..."):
+                existing = auto.get_existing_plans(page_url, row_xpath, cells_map)
+            st.info(f"已抓取到 {len(existing)} 条已有备案计划")
+            # 展示部分样例
+            if existing:
+                st.write("已有计划示例（前5条）：", existing[:5])
 
-    st.info(f"共筛选出 {len(df_filtered)} 条当日/次日计划（今日: {(df_filtered['出发日期_obj'].dt.date == today).sum()}, 明日: {(df_filtered['出发日期_obj'].dt.date == tomorrow).sum()}）")
-    st.subheader("📊 待处理的计划（当日/次日）")
-    display_cols = ["出发日期", "飞机注册号", "出发地", "到达地", "计划出发", "预计到达", "用途"]
-    if "航班号" in df.columns:
-        display_cols.insert(1, "航班号")
-    st.dataframe(df_filtered[display_cols])
+            # 2. 匹配筛选
+            existing_set = set()
+            for e in existing:
+                # e = (exec_date_str, reg, dep, arr)
+                existing_set.add((e[0], e[1], e[2], e[3]))
+            unmatched = []
+            for plan in excel_plans:
+                comp_date = date_format_for_compare(plan['exec_date'])
+                if (comp_date, plan['reg'], plan['dep'], plan['arr']) not in existing_set:
+                    unmatched.append(plan)
+            st.success(f"需要备案的计划数量: {len(unmatched)}")
+            if not unmatched:
+                st.balloons()
+                st.info("所有计划均已备案，无需操作！")
+                return
 
-    # 准备数据供 JavaScript 使用
-    records = df_filtered.to_dict(orient="records")
-    for rec in records:
-        rec.pop("出发日期_obj", None)
-        rec["出发日期_yyyymmdd"] = pd.to_datetime(rec["出发日期"]).strftime("%Y%m%d")
-        rec["计划出发_hhmm"] = rec["计划出发"].replace(":", "") if isinstance(rec["计划出发"], str) else ""
-        rec["计划到达_hhmm"] = rec["预计到达"].replace(":", "") if isinstance(rec["预计到达"], str) else ""
-        rec["机型"] = get_aircraft_type(rec["飞机注册号"])
-        rec["任务性质"] = "调机飞行" if rec["用途"] in ["调机", "维修"] else "公务飞行"
+            # 3. 逐条备案
+            progress_bar = st.progress(0)
+            log_area = st.empty()
+            success_count = 0
+            for idx, plan in enumerate(unmatched):
+                log_area.text(f"正在备案: {plan['reg']} - {plan['exec_date']} ({idx+1}/{len(unmatched)})")
+                if auto.add_new_plan(plan, xpath_config):
+                    success_count += 1
+                # 每次新增后稍作停顿，避免过速
+                time.sleep(1.5)
+                progress_bar.progress((idx + 1) / len(unmatched))
 
-    js_data = json.dumps(records, ensure_ascii=False, indent=2)
-
-    # 生成 JavaScript 脚本（使用用户提供的所有精确 XPath，并修复模板字符串转义）
-    script = f"""
-// ================= 自动生成的当日/次日计划备案脚本 =================
-// 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-// 需要比对的计划数: {len(df_filtered)}
-// ================================================================
-
-// ================= 配置区 =================
-const ROW_XPATH = '/html/body/div[1]/div[3]/div/div/div/div[2]/div[4]/div[2]/div/table/tbody/tr';
-const DATE_SELECTOR = 'td:nth-child(10) div';
-const REG_SELECTOR = 'td:nth-child(8) div';
-const DEP_AIRPORT_SELECTOR = 'td:nth-child(11) div';
-const ARR_AIRPORT_SELECTOR = 'td:nth-child(14) div';
-const ADD_BTN_XPATH = '/html/body/div[1]/div[2]/div/table/tbody/tr/td[1]/a[1]/span/span[2]';
-const MODAL_ROOT_XPATH = '/html/body/div[2]';
-const AIRCRAFT_TYPE_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[2]/span/span/input';
-const DATE_CLICK_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/span/span[2]';
-const REMOTE_RUN_CLICK_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[6]/span/span/span/span[2]';
-const TASK_TYPE_CLICK_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[6]/span/span/span/span[2]';
-const FLIGHT_NO_SPAN_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span';
-const REG_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[10]/span/span/input';
-const DEP_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[2]/span/span/input';
-const ARR_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[8]/span/span/input';
-const DEP_TIME_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[4]/span/span/input';
-const ARR_TIME_INPUT_XPATH = '/html/body/div[2]/div/div[2]/div[2]/div/ul[3]/li[6]/span/span/input';
-
-const pendingPlans = {js_data};
-
-// ================= 辅助函数 =================
-function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
-async function waitForElement(xpath, timeout = 15000) {{
-    const start = Date.now();
-    while (Date.now() - start < timeout) {{
-        const el = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (el) return el;
-        await sleep(300);
-    }}
-    console.warn(`[WARN] 等待元素超时: ${{xpath}}`);
-    return null;
-}}
-function setInputValue(el, value) {{
-    if (!el) return false;
-    el.value = value;
-    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    el.blur();
-    return true;
-}}
-async function clickElement(xpath, timeout = 10000) {{
-    const el = await waitForElement(xpath, timeout);
-    if (el) {{
-        el.click();
-        await sleep(500);
-        return true;
-    }}
-    console.error(`[ERROR] 未找到元素: ${{xpath}}`);
-    return false;
-}}
-async function setSelectValue(selector, valueText) {{
-    // 通用下拉框选择（用于异地运行等）
-    const selectEl = document.querySelector(selector);
-    if (!selectEl) return false;
-    for (let i = 0; i < selectEl.options.length; i++) {{
-        if (selectEl.options[i].text === valueText) {{
-            selectEl.selectedIndex = i;
-            selectEl.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            return true;
-        }}
-    }}
-    return false;
-}}
-function getExistingPlans() {{
-    const rows = document.evaluate(ROW_XPATH, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-    const plans = [];
-    for (let i = 0; i < rows.snapshotLength; i++) {{
-        const row = rows.snapshotItem(i);
-        const dateEl = row.querySelector(DATE_SELECTOR);
-        const regEl = row.querySelector(REG_SELECTOR);
-        const depEl = row.querySelector(DEP_AIRPORT_SELECTOR);
-        const arrEl = row.querySelector(ARR_AIRPORT_SELECTOR);
-        if (dateEl && regEl && depEl && arrEl) {{
-            plans.push({{
-                date: dateEl.innerText.trim(),
-                reg: regEl.innerText.trim(),
-                dep: depEl.innerText.trim(),
-                arr: arrEl.innerText.trim(),
-            }});
-        }}
-    }}
-    return plans;
-}}
-function isPlanExists(plan, existingPlans) {{
-    return existingPlans.some(p => 
-        p.date === plan.出发日期_yyyymmdd &&
-        p.reg === plan.飞机注册号 &&
-        p.dep === plan.出发地 &&
-        p.arr === plan.到达地
-    );
-}}
-
-// ================= 弹窗内填写（逐项） =================
-async function fillAndWait(plan) {{
-    console.log(`\\n[START] 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
-    // 1. 点击新增按钮
-    if (!(await clickElement(ADD_BTN_XPATH))) return false;
-    await sleep(1000);
-
-    // 2. 填写机型（直接输入框）
-    const aircraftInput = await waitForElement(AIRCRAFT_TYPE_XPATH, 10000);
-    if (aircraftInput) {{
-        setInputValue(aircraftInput, plan.机型);
-        console.log(`[OK] 已填写机型: ${{plan.机型}}`);
-    }}
-
-    // 3. 点击日期选择器，然后选择日期（由于日历控件的复杂性，直接设置 input 可能无效，因此点击之后再尝试直接设置值）
-    await clickElement(DATE_CLICK_XPATH);
-    await sleep(500);
-    // 尝试直接设置可见的日期输入框（如果有）
-    const dateInput = document.querySelector('input[type="date"]');
-    if (dateInput) {{
-        setInputValue(dateInput, plan.出发日期);
-        console.log(`[DATE] 已设置日期: ${{plan.出发日期}}`);
-    }} else {{
-        console.warn('[DATE] 未找到日期输入框，请手动选择日期');
-    }}
-
-    // 4. 异地运行：点击下拉触发器，选择“是”
-    await clickElement(REMOTE_RUN_CLICK_XPATH);
-    await sleep(500);
-    // 假设出现的下拉框是 select 且 id 或 class 可定位，这里简单查找最近的 select
-    const remoteSelect = document.querySelector('select');
-    if (remoteSelect) {{
-        await setSelectValue(remoteSelect, '是');
-        console.log('[OK] 已选择异地运行: 是');
-    }} else {{
-        console.warn('[REMOTE] 未找到下拉框，请手动选择');
-    }}
-
-    // 5. 任务性质：点击触发器，输入文本
-    await clickElement(TASK_TYPE_CLICK_XPATH);
-    await sleep(500);
-    const taskInput = document.querySelector('input[type="text"]'); // 可能弹出的输入框
-    if (taskInput) {{
-        setInputValue(taskInput, plan.任务性质);
-        console.log(`[TASK] 已填写任务性质: ${{plan.任务性质}}`);
-    }} else {{
-        console.warn('[TASK] 未找到任务性质输入框，请手动填写');
-    }}
-
-    // 6. 填写注册号（两处）
-    const regSpan = await waitForElement(FLIGHT_NO_SPAN_XPATH, 5000);
-    if (regSpan) setInputValue(regSpan, plan.飞机注册号);
-    const regInput = await waitForElement(REG_INPUT_XPATH, 5000);
-    if (regInput) setInputValue(regInput, plan.飞机注册号);
-
-    // 7. 起飞机场
-    const depInput = await waitForElement(DEP_INPUT_XPATH, 5000);
-    if (depInput) setInputValue(depInput, plan.出发地);
-
-    // 8. 落地机场
-    const arrInput = await waitForElement(ARR_INPUT_XPATH, 5000);
-    if (arrInput) setInputValue(arrInput, plan.到达地);
-
-    // 9. 起飞时间
-    const depTimeInput = await waitForElement(DEP_TIME_INPUT_XPATH, 5000);
-    if (depTimeInput) setInputValue(depTimeInput, plan.计划出发_hhmm);
-
-    // 10. 落地时间
-    const arrTimeInput = await waitForElement(ARR_TIME_INPUT_XPATH, 5000);
-    if (arrTimeInput) setInputValue(arrTimeInput, plan.计划到达_hhmm);
-
-    console.log('[INFO] 表单填写完成，请手动点击“保存”按钮。');
-    console.log('[WAIT] 等待弹窗关闭（可切换到其他页面，脚本会继续等待）...');
-    console.log('[HELP] 如果弹窗已关闭但脚本未继续，请在控制台输入 window.__forceContinue = true 并回车。');
-    
-    window.__forceContinue = false;
-    while (true) {{
-        await sleep(2000);
-        if (window.__forceContinue) {{
-            console.log('[FORCE] 手动强制继续');
-            window.__forceContinue = false;
-            break;
-        }}
-        const modalRoot = document.evaluate(MODAL_ROOT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (!modalRoot) break;
-        const style = window.getComputedStyle(modalRoot);
-        if (style.display === 'none' || style.visibility === 'hidden') break;
-    }}
-    console.log('[CLOSE] 弹窗已关闭，继续下一条');
-    return true;
-}}
-
-// ================= 主流程 =================
-(async () => {{
-    console.log('🚀 开始执行备案流程...');
-    const existingPlans = getExistingPlans();
-    console.log(`[EXIST] 网页中已有 ${{existingPlans.length}} 条计划`);
-    const toRecord = pendingPlans.filter(plan => !isPlanExists(plan, existingPlans));
-    console.log(`[NEED] 需要备案的计划数: ${{toRecord.length}}`);
-    if (toRecord.length === 0) {{
-        console.log('🎉 所有计划均已备案，无需操作。');
-        return;
-    }}
-    for (let i = 0; i < toRecord.length; i++) {{
-        console.log(`\\n========== 处理第 ${{i+1}}/${{toRecord.length}} 条计划 ==========`);
-        const success = await fillAndWait(toRecord[i]);
-        if (!success) {{
-            console.error(`[ERROR] 第 ${{i+1}} 条计划备案失败，停止后续。`);
-            break;
-        }}
-        await sleep(1000);
-    }}
-    console.log('\\n🎉 所有需要备案的计划处理完毕！');
-}})();
-"""
-
-    st.subheader("📜 生成的 JavaScript 脚本")
-    # 使用 HTML + JavaScript 实现可靠的一键复制
-    st.markdown(f"""
-    <div id="script-container" style="background:#f0f2f6;padding:1rem;border-radius:0.5rem;overflow-x:auto;font-family:monospace;font-size:0.9rem;">
-        <pre id="script-pre" style="margin:0;white-space:pre-wrap;word-wrap:break-word;">{script}</pre>
-    </div>
-    <button id="copy-btn" style="margin-top:0.5rem;padding:0.25rem 0.5rem;font-size:0.8rem;background:#0078d7;color:white;border:none;border-radius:4px;cursor:pointer;">📋 一键复制脚本</button>
-    <script>
-    const btn = document.getElementById('copy-btn');
-    const pre = document.getElementById('script-pre');
-    btn.addEventListener('click', async () => {{
-        const text = pre.innerText;
-        try {{
-            await navigator.clipboard.writeText(text);
-            alert('脚本已复制到剪贴板！');
-        }} catch (err) {{
-            console.error(err);
-            // 降级方案
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-            alert('脚本已复制到剪贴板（使用降级方式）');
-        }}
-    }});
-    </script>
-    """, unsafe_allow_html=True)
-    
-    st.info("复制以上代码，在目标网页（当日/次日计划列表页）按 F12 打开控制台，粘贴并回车执行。脚本将自动比对并填写未备案的计划，每填完一条后等待您手动点击“保存”，然后继续下一条。")
-    st.download_button(
-        label="💾 下载脚本文件 (.js)",
-        data=script,
-        file_name="daily_plan_record.js",
-        mime="application/javascript"
-    )
+            st.success(f"✅ 备案完成！成功 {success_count} 条，失败 {len(unmatched)-success_count} 条")
+            if success_count == len(unmatched):
+                st.balloons()
+        except Exception as e:
+            st.error(f"自动化过程发生错误: {str(e)}")
+        finally:
+            auto.close()
 else:
-    st.info("请上传 Excel 文件以开始生成脚本。")
+    st.info("👈 请先在左侧配置好页面元素XPath，然后上传Excel文件")
+
+st.markdown("---")
+st.caption("💡 使用说明：\n"
+           "1. 首次使用请务必根据实际网页，在侧边栏正确配置所有XPath定位器（尤其是弹框内的各个输入框）\n"
+           "2. 推荐使用远程调试浏览器，避免处理登录和验证码：\n"
+           "   - 在命令行启动Chrome: `chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\\selenium_profile`\n"
+           "   - 然后手动打开目标网站并登录，再回到本工具勾选「使用已登录的远程浏览器」并填写端口\n"
+           "3. 若不使用远程调试，工具会弹出新浏览器窗口，你需要手动登录后点击「我已登录完成，继续执行」按钮")
