@@ -102,7 +102,7 @@ async function waitForElement(xpath, timeout = 15000) {{
         if (el) return el;
         await sleep(300);
     }}
-    console.warn(`⚠️ 等待元素超时: ${{xpath}}`);
+    console.warn(`[WARN] 等待元素超时: ${{xpath}}`);
     return null;
 }}
 function setInputValue(el, value) {{
@@ -120,7 +120,7 @@ async function clickElement(xpath, timeout = 10000) {{
         await sleep(500);
         return true;
     }}
-    console.error(`❌ 未找到元素: ${{xpath}}`);
+    console.error(`[ERROR] 未找到元素: ${{xpath}}`);
     return false;
 }}
 function getExistingPlans() {{
@@ -154,9 +154,9 @@ function isPlanExists(plan, existingPlans) {{
 
 // ================= 改进的弹窗关闭检测 =================
 async function waitForModalClose() {{
-    console.log('✅ 表单填写完成，请手动点击“保存”按钮。');
-    console.log('⏳ 等待弹窗关闭（可切换到其他页面，脚本会继续等待）...');
-    console.log('💡 如果弹窗已关闭但脚本未继续，请在控制台输入 window.__forceContinue = true 并回车。');
+    console.log('[INFO] 表单填写完成，请手动点击“保存”按钮。');
+    console.log('[WAIT] 等待弹窗关闭（可切换到其他页面，脚本会继续等待）...');
+    console.log('[TIP] 如果弹窗已关闭但脚本未继续，请在控制台输入 window.__forceContinue = true 并回车。');
     
     window.__forceContinue = false;
     
@@ -164,21 +164,21 @@ async function waitForModalClose() {{
         await sleep(2000);
         
         if (window.__forceContinue) {{
-            console.log('🔓 手动强制继续，跳过弹窗检测');
+            console.log('[FORCE] 手动强制继续，跳过弹窗检测');
             window.__forceContinue = false;
             break;
         }}
         
         const modalRoot = document.evaluate(MODAL_ROOT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         if (!modalRoot) {{
-            console.log('✅ 弹窗已关闭（元素不存在），继续下一条');
+            console.log('[CLOSE] 弹窗已关闭（元素不存在），继续下一条');
             break;
         }}
         
         const style = window.getComputedStyle(modalRoot);
         const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
         if (!isVisible) {{
-            console.log('✅ 弹窗已关闭（不可见），继续下一条');
+            console.log('[CLOSE] 弹窗已关闭（不可见），继续下一条');
             break;
         }}
     }}
@@ -187,34 +187,34 @@ async function waitForModalClose() {{
 
 // ================= 填写单条计划 =================
 async function fillAndWait(plan) {{
-    console.log(`\\n🔧 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
+    console.log(`\\n[START] 开始备案计划：${{plan.飞机注册号}} ${{plan.出发地}} -> ${{plan.到达地}}`);
     if (!(await clickElement(ADD_BTN_XPATH))) return false;
     await sleep(1000);
 
     const aircraftInput = await waitForElement(AIRCRAFT_TYPE_XPATH, 10000);
     if (aircraftInput) {{
         setInputValue(aircraftInput, plan.机型);
-        console.log(`📝 已填写机型: ${{plan.机型}}`);
+        console.log(`[OK] 已填写机型: ${{plan.机型}}`);
     }}
     const dateInput = await waitForElement(DATE_INPUT_XPATH, 10000);
     if (dateInput) {{
         setInputValue(dateInput, plan.出发日期);
-        console.log(`📅 已填写日期: ${{plan.出发日期}}`);
+        console.log(`[DATE] 已填写日期: ${{plan.出发日期}}`);
     }}
     const remoteInput = await waitForElement(REMOTE_RUN_INPUT_XPATH, 5000);
     if (remoteInput) {{
         setInputValue(remoteInput, '是');
-        console.log('✅ 已填写异地运行: 是');
+        console.log('[OK] 已填写异地运行: 是');
     }}
     const taskInput = await waitForElement(TASK_TYPE_INPUT_XPATH, 5000);
     if (taskInput) {{
         setInputValue(taskInput, plan.任务性质);
-        console.log(`📝 已填写任务性质: ${{plan.任务性质}}`);
+        console.log(`[TASK] 已填写任务性质: ${{plan.任务性质}}`);
     }}
     const flightNoInput = await waitForElement(FLIGHT_NO_XPATH, 5000);
     if (flightNoInput) {{
         setInputValue(flightNoInput, plan.飞机注册号);
-        console.log(`📝 已填写航班号/注册号: ${{plan.飞机注册号}}`);
+        console.log(`[FLIGHT] 已填写航班号/注册号: ${{plan.飞机注册号}}`);
     }}
     const regSpan = await waitForElement(REG_SPAN_XPATH, 5000);
     if (regSpan) setInputValue(regSpan, plan.飞机注册号);
@@ -237,9 +237,9 @@ async function fillAndWait(plan) {{
 (async () => {{
     console.log('🚀 开始执行备案流程...');
     const existingPlans = getExistingPlans();
-    console.log(`📋 网页中已有 ${{existingPlans.length}} 条计划`);
+    console.log(`[EXIST] 网页中已有 ${{existingPlans.length}} 条计划`);
     const toRecord = pendingPlans.filter(plan => !isPlanExists(plan, existingPlans));
-    console.log(`📊 需要备案的计划数: ${{toRecord.length}}`);
+    console.log(`[NEED] 需要备案的计划数: ${{toRecord.length}}`);
     if (toRecord.length === 0) {{
         console.log('🎉 所有计划均已备案，无需操作。');
         return;
@@ -248,7 +248,7 @@ async function fillAndWait(plan) {{
         console.log(`\\n========== 处理第 ${{i+1}}/${{toRecord.length}} 条计划 ==========`);
         const success = await fillAndWait(toRecord[i]);
         if (!success) {{
-            console.error(`❌ 第 ${{i+1}} 条计划备案失败，停止后续。`);
+            console.error(`[ERROR] 第 ${{i+1}} 条计划备案失败，停止后续。`);
             break;
         }}
         await sleep(1000);
@@ -258,8 +258,27 @@ async function fillAndWait(plan) {{
 """
 
     st.subheader("📜 生成的 JavaScript 脚本")
-    # 使用 pre 避免动态导入错误
-    st.markdown(f"<div style='background:#f0f2f6;padding:1rem;border-radius:0.5rem;overflow-x:auto;font-family:monospace;font-size:0.9rem;'><pre>{script}</pre></div>", unsafe_allow_html=True)
+    # 使用 pre 展示代码，并提供一键复制按钮
+    st.markdown(f"""
+    <div style="position:relative;">
+        <div style="background:#f0f2f6;padding:1rem;border-radius:0.5rem;overflow-x:auto;font-family:monospace;font-size:0.9rem;">
+            <pre id="scriptContent" style="margin:0;white-space:pre-wrap;word-wrap:break-word;">{script}</pre>
+        </div>
+        <button onclick="copyToClipboard()" style="position:absolute;top:0.5rem;right:0.5rem;padding:0.25rem 0.5rem;font-size:0.8rem;background:#0078d7;color:white;border:none;border-radius:4px;cursor:pointer;">📋 一键复制</button>
+    </div>
+    <script>
+    function copyToClipboard() {{
+        const content = document.getElementById('scriptContent').innerText;
+        navigator.clipboard.writeText(content).then(() => {{
+            alert('脚本已复制到剪贴板');
+        }}).catch(err => {{
+            console.error('复制失败:', err);
+            alert('复制失败，请手动复制');
+        }});
+    }}
+    </script>
+    """, unsafe_allow_html=True)
+    
     st.info("复制以上代码，在目标网页（当日/次日计划列表页）按 F12 打开控制台，粘贴并回车执行。脚本将自动比对并填写未备案的计划，每填完一条后等待您手动点击“保存”，然后继续下一条。")
     st.download_button(
         label="💾 下载脚本文件 (.js)",
