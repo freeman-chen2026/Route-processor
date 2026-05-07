@@ -258,24 +258,50 @@ async function fillAndWait(plan) {{
 """
 
     st.subheader("📜 生成的 JavaScript 脚本")
-    # 使用 pre 展示代码，并提供一键复制按钮
+    
+    # 使用 st.code 并添加自定义复制按钮（通过 JavaScript 实现）
+    # 注意：st.code 可能仍然有动态导入问题，但我们可以放在一个容器中，且提供下载和复制两种方式。
+    # 更可靠：使用 st.text_area 显示脚本，用户手动复制，但体验不好。这里采用 html 预置复制。
+    
+    # 由于之前动态导入错误，我们使用 st.markdown 输出代码块，并附加一个可靠的复制按钮。
+    # 增加一个隐藏的 input 辅助复制，确保跨浏览器兼容。
+    
     st.markdown(f"""
-    <div style="position:relative;">
-        <div style="background:#f0f2f6;padding:1rem;border-radius:0.5rem;overflow-x:auto;font-family:monospace;font-size:0.9rem;">
-            <pre id="scriptContent" style="margin:0;white-space:pre-wrap;word-wrap:break-word;">{script}</pre>
+    <div style="background:#f0f2f6;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+            <button id="copyScriptBtn" style="padding:4px 12px;background:#0078d7;color:white;border:none;border-radius:4px;cursor:pointer;">📋 一键复制脚本</button>
         </div>
-        <button onclick="copyToClipboard()" style="position:absolute;top:0.5rem;right:0.5rem;padding:0.25rem 0.5rem;font-size:0.8rem;background:#0078d7;color:white;border:none;border-radius:4px;cursor:pointer;">📋 一键复制</button>
+        <pre id="scriptContent" style="margin:0;white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:13px;overflow-x:auto;">{script}</pre>
     </div>
     <script>
-    function copyToClipboard() {{
-        const content = document.getElementById('scriptContent').innerText;
-        navigator.clipboard.writeText(content).then(() => {{
-            alert('脚本已复制到剪贴板');
-        }}).catch(err => {{
-            console.error('复制失败:', err);
-            alert('复制失败，请手动复制');
-        }});
-    }}
+    (function() {{
+        const btn = document.getElementById('copyScriptBtn');
+        const pre = document.getElementById('scriptContent');
+        if (btn && pre) {{
+            btn.addEventListener('click', function() {{
+                const text = pre.innerText;
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(text).then(function() {{
+                        alert('脚本已复制到剪贴板');
+                    }}).catch(function(err) {{
+                        console.error('复制失败:', err);
+                        fallbackCopy(text);
+                    }});
+                }} else {{
+                    fallbackCopy(text);
+                }}
+            }});
+            function fallbackCopy(text) {{
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('脚本已复制到剪贴板');
+            }}
+        }}
+    }})();
     </script>
     """, unsafe_allow_html=True)
     
