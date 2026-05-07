@@ -31,33 +31,70 @@ def generate_full_script(records):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     num_records = len(records)
 
-    # 使用三重引号，所有花括号（除了占位符）都加倍
+    # 脚本模板 - 使用 .format() 避免花括号冲突，并增强健壮性
     script_template = """
-// ================= 次日计划自动录入脚本 =================
+// ================= 次日计划自动录入脚本（增强版） =================
 // 生成时间: {now_str}
 // 待处理计划数: {num_records}
-// ======================================================
+// ================================================================
 
-// ----------------------------- 公共辅助函数 ---------------------------------
+// ----------------------------- 可自定义配置 ---------------------------------
+const CONFIG = {{
+    // 是否启用详细日志
+    verbose: true,
+    // 等待元素超时(ms)
+    timeout: 15000,
+    // 若页面使用了 iframe，请填写 iframe 的 ID 或选择器（例如 '#main'），否则留空 null
+    iframeSelector: null,   // 例如 '#main' 或 'iframe'
+    // 新增按钮的文本（支持多种）
+    addButtonTexts: ["新增", "添加", "新建", "New"],
+    // 自定义 XPath（留空则自动使用文本查找）
+    customAddBtnXPath: "",
+}};
+
+// ----------------------------- 公共辅助函数（支持 iframe） ---------------------------------
+let mainDoc = document;
+
+function getMainDocument() {{
+    return mainDoc;
+}}
+
+async function setIframeDocument(selector) {{
+    if (!selector) return;
+    const iframe = document.querySelector(selector);
+    if (!iframe) {{
+        console.warn(`未找到 iframe: ${{selector}}，将使用顶层文档`);
+        return;
+    }}
+    // 等待 iframe 加载
+    await new Promise(resolve => {{
+        if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {{
+            resolve();
+        }} else {{
+            iframe.onload = () => resolve();
+        }}
+    }});
+    mainDoc = iframe.contentDocument || iframe.contentWindow.document;
+    console.log(`已切换到 iframe 文档: ${{selector}}`);
+}}
+
 function sleep(ms) {{
     return new Promise(resolve => setTimeout(resolve, ms));
 }}
 
 /**
- * 等待元素出现（支持XPath或CSS选择器）
- * @param {{string}} selector - XPath 或 CSS 选择器
- * @param {{number}} timeout - 超时时间(ms)
- * @param {{boolean}} isXPath - 是否为XPath
- * @returns {{Promise<Element|null>}}
+ * 等待元素出现（支持 XPath 和 CSS，自动在 iframe 内查找）
  */
-async function waitForElement(selector, timeout = 15000, isXPath = true) {{
+async function waitForElement(selector, timeout = CONFIG.timeout, isXPath = true) {{
     const start = Date.now();
     while (Date.now() - start < timeout) {{
         let el = null;
+        const doc = getMainDocument();
+        if (!doc) return null;
         if (isXPath) {{
-            el = document.evaluate(selector, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            el = doc.evaluate(selector, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
         }} else {{
-            el = document.querySelector(selector);
+            el = doc.querySelector(selector);
         }}
         if (el) return el;
         await sleep(300);
@@ -67,10 +104,24 @@ async function waitForElement(selector, timeout = 15000, isXPath = true) {{
 }}
 
 /**
- * 设置输入框的值并触发事件
- * @param {{HTMLElement}} inputEl
- * @param {{string}} value
+ * 通过文本内容查找按钮（更通用）
  */
+async function findButtonByText(texts, timeout = CONFIG.timeout) {{
+    const start = Date.now();
+    while (Date.now() - start < timeout) {{
+        const doc = getMainDocument();
+        if (!doc) return null;
+        for (let text of texts) {{
+            // 尝试通过 XPath 查找包含文本的按钮、链接或 span
+            const xpath = `//button[contains(text(), '${{text}}')] | //a[contains(text(), '${{text}}')] | //span[contains(text(), '${{text}}')]`;
+            const el = doc.evaluate(xpath, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            if (el) return el;
+        }}
+        await sleep(300);
+    }}
+    return null;
+}}
+
 function setInputValue(inputEl, value) {{
     if (!inputEl) return false;
     inputEl.value = value;
@@ -80,31 +131,16 @@ function setInputValue(inputEl, value) {{
     return true;
 }}
 
-/**
- * 点击元素并等待
- */
 async function clickElement(el) {{
     if (!el) return false;
+    el.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+    await sleep(300);
     el.click();
     await sleep(500);
     return true;
 }}
 
-// ----------------------------- XPath 配置（可根据实际页面微调） ---------------------------------
-const XPATHS = {{
-    addBtn: "/html/body/div[1]/div[2]/div/table/tbody/tr/td[1]/a[1]/span/span[2]",
-    modelInput: "//*[contains(text(), '机型')]/following::input[1]",
-    execDateTrigger: "/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/span/span[2]",
-    remoteRunTrigger: "/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[6]/span/span/span/span[2]",
-    missionTypeTrigger: "/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[6]/span/span/span/span[2]",
-    regSpan: "/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span",
-    regInput: "/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[10]/span/span/input",
-    depAirportInput: "//*[contains(text(), '起飞机场')]/following::input[1]",
-    arrAirportInput: "//*[contains(text(), '到达机场')]/following::input[1]",
-    submitBtn: "//button[contains(text(), '确定')] | //button[contains(text(), '保存')] | //a[contains(text(), '确定')]",
-}};
-
-// ----------------------------- 核心业务函数 ---------------------------------
+// ----------------------------- 业务函数 ---------------------------------
 function getModelByReg(reg) {{
     const map = {{
         "B652Q": "GLF4", "B652R": "GLF4", "B652S": "GLF4", "B8262": "GLF4",
@@ -113,24 +149,55 @@ function getModelByReg(reg) {{
     return map[reg] || "GLF4";
 }}
 
+async function openAddDialog() {{
+    // 1. 优先使用自定义 XPath
+    if (CONFIG.customAddBtnXPath) {{
+        let btn = await waitForElement(CONFIG.customAddBtnXPath, CONFIG.timeout, true);
+        if (btn) {{
+            await clickElement(btn);
+            return true;
+        }}
+    }}
+    // 2. 通过文本查找
+    let btn = await findButtonByText(CONFIG.addButtonTexts, CONFIG.timeout);
+    if (btn) {{
+        await clickElement(btn);
+        return true;
+    }}
+    // 3. 尝试常见的 CSS 选择器
+    const selectors = ['.add-btn', '.btn-add', 'button.add', 'a.add'];
+    for (let sel of selectors) {{
+        let el = await waitForElement(sel, 1000, false);
+        if (el) {{
+            await clickElement(el);
+            return true;
+        }}
+    }}
+    console.error("❌ 未能找到新增按钮，请检查页面或手动配置 customAddBtnXPath");
+    return false;
+}}
+
 async function setExecDate(dateStr) {{
-    const dateInput = document.querySelector('input[type="date"], input[placeholder*="日期"], .date-input');
+    // 尝试直接设置日期输入框
+    const dateInput = getMainDocument().querySelector('input[type="date"], input[placeholder*="日期"], .date-input');
     if (dateInput && dateInput.value !== undefined) {{
         setInputValue(dateInput, dateStr);
         console.log(`✅ 直接设置日期输入框: ${{dateStr}}`);
         return true;
     }}
-    const trigger = await waitForElement(XPATHS.execDateTrigger, 5000, true);
+    // 否则尝试点击日期触发器（您提供的 XPath）
+    const triggerXPath = "/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[4]/span/span/span/span[2]";
+    const trigger = await waitForElement(triggerXPath, 5000, true);
     if (!trigger) {{
         console.warn("未找到执行日期触发器，跳过日期填写");
         return false;
     }}
-    trigger.click();
+    await clickElement(trigger);
     await sleep(800);
     const day = parseInt(dateStr.split('-')[2], 10);
-    const dayCell = document.evaluate(`//td[contains(@class, 'day') and text()='${{day}}']`, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    const dayCell = getMainDocument().evaluate(`//td[contains(@class, 'day') and text()='${{day}}']`, getMainDocument(), null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (dayCell) {{
-        dayCell.click();
+        await clickElement(dayCell);
         console.log(`✅ 已选择日期: ${{dateStr}}`);
         return true;
     }}
@@ -142,18 +209,18 @@ async function processOneRecord(record, index) {{
     console.log(`\\n========== 开始处理第 ${{index + 1}} 条计划 ==========`);
     console.log(`注册号: ${{record.reg}} | 起飞机场: ${{record.dep_airport}} | 到达机场: ${{record.arr_airport}} | 日期: ${{record.dep_date}}`);
     
-    const addBtn = await waitForElement(XPATHS.addBtn, 10000, true);
-    if (!addBtn) {{
-        console.error("❌ 未找到新增按钮，请确认当前页面在列表页且XPath正确");
+    // 打开新增弹框
+    if (!(await openAddDialog())) {{
+        console.error("❌ 打开新增弹框失败，终止流程");
         return false;
     }}
-    addBtn.click();
-    await sleep(1500);
+    await sleep(1500); // 等待弹框加载
     
+    // 填写机型
     const model = getModelByReg(record.reg);
-    let modelInput = await waitForElement(XPATHS.modelInput, 8000, true);
+    let modelInput = await waitForElement("//*[contains(text(), '机型')]/following::input[1]", 8000, true);
     if (!modelInput) {{
-        modelInput = document.evaluate("//input[@placeholder='机型'] | //input[contains(@name, 'model')]", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        modelInput = getMainDocument().evaluate("//input[@placeholder='机型'] | //input[contains(@name, 'model')]", getMainDocument(), null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     }}
     if (modelInput) {{
         setInputValue(modelInput, model);
@@ -162,25 +229,28 @@ async function processOneRecord(record, index) {{
         console.warn("⚠️ 未找到机型输入框，跳过机型填写");
     }}
     
+    // 设置日期
     await setExecDate(record.dep_date);
     
-    const remoteTrigger = await waitForElement(XPATHS.remoteRunTrigger, 5000, true);
+    // 异地运行选择“是”
+    const remoteTrigger = await waitForElement("/html/body/div[2]/div/div[2]/div[2]/div/ul[2]/li[6]/span/span/span/span[2]", 5000, true);
     if (remoteTrigger) {{
-        remoteTrigger.click();
+        await clickElement(remoteTrigger);
         await sleep(500);
-        const yesOption = document.evaluate("//li[contains(text(),'是')] | //span[contains(text(),'是')]", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-        if (yesOption) yesOption.click();
+        const yesOption = getMainDocument().evaluate("//li[contains(text(),'是')] | //span[contains(text(),'是')]", getMainDocument(), null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (yesOption) await clickElement(yesOption);
     }}
     
+    // 任务性质
     let missionText = "公务飞行";
     if (record.purpose && (record.purpose.includes("调机") || record.purpose.includes("维修"))) {{
         missionText = "调机飞行";
     }}
-    const missionTrigger = await waitForElement(XPATHS.missionTypeTrigger, 5000, true);
+    const missionTrigger = await waitForElement("/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[6]/span/span/span/span[2]", 5000, true);
     if (missionTrigger) {{
-        missionTrigger.click();
+        await clickElement(missionTrigger);
         await sleep(500);
-        let missionInput = document.activeElement;
+        let missionInput = getMainDocument().activeElement;
         if (missionInput && (missionInput.tagName === 'INPUT' || missionInput.isContentEditable)) {{
             if (missionInput.isContentEditable) {{
                 missionInput.innerText = missionText;
@@ -192,23 +262,28 @@ async function processOneRecord(record, index) {{
         }}
     }}
     
-    const regSpan = await waitForElement(XPATHS.regSpan, 3000, true);
+    // 填写注册号（两处）
+    const regSpan = await waitForElement("/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[8]/span", 3000, true);
     if (regSpan) regSpan.innerText = record.reg;
-    const regInput = await waitForElement(XPATHS.regInput, 5000, true);
+    const regInput = await waitForElement("/html/body/div[2]/div/div[2]/div[2]/div/ul[1]/li[10]/span/span/input", 5000, true);
     if (regInput) setInputValue(regInput, record.reg);
     
-    const depInput = await waitForElement(XPATHS.depAirportInput, 5000, true);
+    // 起飞机场
+    const depInput = await waitForElement("//*[contains(text(), '起飞机场')]/following::input[1]", 5000, true);
     if (depInput) setInputValue(depInput, record.dep_airport);
     
-    const arrInput = await waitForElement(XPATHS.arrAirportInput, 5000, true);
+    // 到达机场
+    const arrInput = await waitForElement("//*[contains(text(), '到达机场')]/following::input[1]", 5000, true);
     if (arrInput) setInputValue(arrInput, record.arr_airport);
     
-    const submitBtn = await waitForElement(XPATHS.submitBtn, 8000, true);
+    // 提交
+    const submitBtn = await waitForElement("//button[contains(text(), '确定')] | //button[contains(text(), '保存')] | //a[contains(text(), '确定')]", 8000, true);
     if (submitBtn) {{
-        submitBtn.click();
+        await clickElement(submitBtn);
         console.log("🔘 已点击提交按钮，等待保存...");
-        await sleep(2000);
-        await waitForElement(XPATHS.addBtn, 10000, true);
+        await sleep(3000);
+        // 等待弹框关闭，重新回到列表页（通过检测新增按钮是否再次可见）
+        await openAddDialog();  // 检测是否可再次打开，以此判断是否已返回列表页
         console.log(`✅ 第 ${{index + 1}} 条计划处理完成并已返回列表页`);
         return true;
     }} else {{
@@ -217,10 +292,14 @@ async function processOneRecord(record, index) {{
     }}
 }}
 
-// ----------------------------- 主执行流程 ---------------------------------
+// ----------------------------- 主流程 ---------------------------------
 const flightRecords = {records_json};
 
 async function runAutoEntry() {{
+    // 如果配置了 iframe，先切换到 iframe
+    if (CONFIG.iframeSelector) {{
+        await setIframeDocument(CONFIG.iframeSelector);
+    }}
     console.log(`🚀 开始执行次日计划自动录入，共 ${{flightRecords.length}} 条计划`);
     for (let i = 0; i < flightRecords.length; i++) {{
         const success = await processOneRecord(flightRecords[i], i);
@@ -280,11 +359,10 @@ if uploaded_file is not None:
             )
             st.info("""
             **使用说明：**
-            1. 请确保已登录目标系统，并停留在「经营活动信息管理」列表页。
-            2. 按 F12 打开开发者工具，切换到 Console（控制台）选项卡。
-            3. 粘贴上面生成的脚本代码，按回车执行。
-            4. 脚本将自动弹出新增弹框并逐条填写次日计划，每次提交后自动返回列表页处理下一条。
-            5. 如遇到特定XPath与您的系统不一致，可修改脚本开头的 `XPATHS` 对象进行适配。
+            1. 登录目标系统，停留在列表页。
+            2. 如果页面在 iframe 中（例如主内容在 `<iframe id="main">` 里），请在生成脚本的顶部 `CONFIG` 中设置 `iframeSelector: "#main"`。
+            3. 如果「新增」按钮的 XPath 不正确，可以在 `CONFIG` 中设置 `customAddBtnXPath` 为您实际的绝对 XPath，或修改 `addButtonTexts` 数组。
+            4. 按 F12 -> Console，粘贴脚本回车运行。
             """)
     except Exception as e:
         st.error(f"处理文件时出错: {e}")
@@ -292,4 +370,4 @@ else:
     st.info("请上传次日计划 Excel 文件开始生成脚本")
 
 st.markdown("---")
-st.caption("本工具根据次日计划 Excel 生成浏览器控制台脚本，实现自动录入飞行计划数据。支持机型自动映射、任务性质判断、日期填写等。")
+st.caption("本工具自动生成浏览器控制台脚本，支持 iframe 和多种元素查找方式。")
