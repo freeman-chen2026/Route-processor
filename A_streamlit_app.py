@@ -322,24 +322,23 @@ function setNumberInput(inputEl, value) {{
 }}
 
 const CITY_MAP_RAW = {city_map_json};
-// 强制修正已知印尼城市映射
-const CITY_MAP_CORRECTED = {{
-    ...CITY_MAP_RAW,
-    "印尼雅加达哈林": "印度尼西亚",
-    "印尼巴厘岛": "印度尼西亚",
-    "台北松山": "台湾",
-    "台北桃园": "台湾",
-    "高雄小港": "台湾",
-    "台中清泉岗": "台湾",
-    "花莲": "台湾",
-    "台东": "台湾",
-    "嘉义": "台湾",
-    "台南": "台湾",
-    "马公": "台湾",
-    "金门": "台湾",
-    "马祖": "台湾"
-}};
-const CITY_MAP = CITY_MAP_CORRECTED;
+// 动态修正所有境外城市：印尼->印度尼西亚，台湾关键词->台湾
+let CITY_MAP = {{}};
+for (let [city, val] of Object.entries(CITY_MAP_RAW)) {{
+    if (city.includes("印尼")) {{
+        CITY_MAP[city] = "印度尼西亚";
+    }} else if (["台北","高雄","台中","花莲","台东","嘉义","台南"].some(kw => city.includes(kw))) {{
+        CITY_MAP[city] = "台湾";
+    }} else {{
+        CITY_MAP[city] = val;
+    }}
+}}
+// 额外强制补充
+CITY_MAP["印尼巴厘岛"] = "印度尼西亚";
+CITY_MAP["印尼雅加达哈林"] = "印度尼西亚";
+CITY_MAP["印尼雅加达 哈达"] = "印度尼西亚";
+CITY_MAP["印尼韦达港"] = "印度尼西亚";
+CITY_MAP["印尼万鸦老"] = "印度尼西亚";
 const DOMESTIC_KEYWORDS = {domestic_keywords_json};
 
 function getLocationInfo(city) {{
@@ -768,9 +767,11 @@ async function tryMatchPlan(plan) {{
     const dateTarget = plan["出发日期"];
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
-    // 获取计划中到达城市的国家/地区名（用于境外匹配）
+    const depInfo = getLocationInfo(depCity);
     const arrInfo = getLocationInfo(arrCity);
-    const arrCountry = arrInfo.region;
+    // 标准化后的国家/城市名（用于匹配）
+    const depMatchKey = depInfo.zone === "境外" ? depInfo.region : depCity;
+    const arrMatchKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -785,20 +786,8 @@ async function tryMatchPlan(plan) {{
         const segText = segEl.innerText.trim();
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
-        const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
-        let arrMatch = false;
-        if (arrInfo.zone === "境内") {{
-            // 境内：用城市名本身或区县名匹配
-            const district = CITY_DETAIL_MAP[arrCity]?.district;
-            if (district && kw.arrKeywords.some(kw => district.includes(kw))) {{
-                arrMatch = true;
-            }} else {{
-                arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
-            }}
-        }} else {{
-            // 境外：用国家名匹配
-            arrMatch = kw.arrKeywords.some(kw => arrCountry.includes(kw));
-        }}
+        const depMatch = kw.depKeywords.some(kw => depMatchKey.includes(kw));
+        const arrMatch = kw.arrKeywords.some(kw => arrMatchKey.includes(kw));
         if (depMatch && arrMatch) {{
             return row;
         }}
