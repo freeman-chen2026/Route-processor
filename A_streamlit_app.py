@@ -250,18 +250,31 @@ def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
 
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
+// 增强版 getMainDoc：自动查找 iframe 并等待其加载
 async function getMainDoc() {{
-    const iframe = document.querySelector('#main');
-    if (!iframe) {{
-        console.error('未找到 iframe #main');
-        return null;
+    const start = Date.now();
+    const timeout = 30000; // 30秒超时
+    while (Date.now() - start < timeout) {{
+        // 尝试通过 id 查找
+        let iframe = document.querySelector('#main');
+        if (!iframe) {{
+            // 如果找不到，尝试通过标签和 name 属性
+            iframe = document.querySelector('iframe[name="main"]');
+        }}
+        if (!iframe) {{
+            // 还可以尝试其他常见的 iframe 选择器
+            iframe = document.querySelector('iframe:not([name=""])');
+        }}
+        if (iframe) {{
+            let doc = iframe.contentDocument;
+            if (doc && doc.querySelector('body')) {{
+                return doc;
+            }}
+        }}
+        await sleep(500);
     }}
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {{
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }}
-    return doc;
+    console.error('❌ 无法获取主文档，请检查页面是否包含 id="main" 的 iframe');
+    return null;
 }}
 
 async function waitForElement(selector, timeout = 15000, isXPath = true) {{
@@ -322,23 +335,27 @@ function setNumberInput(inputEl, value) {{
 }}
 
 const CITY_MAP_RAW = {city_map_json};
-// 动态修正所有境外城市：印尼->印度尼西亚，台湾关键词->台湾
-let CITY_MAP = {{}};
-for (let [city, val] of Object.entries(CITY_MAP_RAW)) {{
-    if (city.includes("印尼")) {{
-        CITY_MAP[city] = "印度尼西亚";
-    }} else if (["台北","高雄","台中","花莲","台东","嘉义","台南"].some(kw => city.includes(kw))) {{
-        CITY_MAP[city] = "台湾";
-    }} else {{
-        CITY_MAP[city] = val;
-    }}
-}}
-// 额外强制补充
-CITY_MAP["印尼巴厘岛"] = "印度尼西亚";
-CITY_MAP["印尼雅加达哈林"] = "印度尼西亚";
-CITY_MAP["印尼雅加达 哈达"] = "印度尼西亚";
-CITY_MAP["印尼韦达港"] = "印度尼西亚";
-CITY_MAP["印尼万鸦老"] = "印度尼西亚";
+// 强制修正已知印尼城市映射
+const CITY_MAP_CORRECTED = {{
+    ...CITY_MAP_RAW,
+    "印尼雅加达哈林": "印度尼西亚",
+    "印尼巴厘岛": "印度尼西亚",
+    "印尼雅加达 哈达": "印度尼西亚",
+    "印尼韦达港": "印度尼西亚",
+    "印尼万鸦老": "印度尼西亚",
+    "台北松山": "台湾",
+    "台北桃园": "台湾",
+    "高雄小港": "台湾",
+    "台中清泉岗": "台湾",
+    "花莲": "台湾",
+    "台东": "台湾",
+    "嘉义": "台湾",
+    "台南": "台湾",
+    "马公": "台湾",
+    "金门": "台湾",
+    "马祖": "台湾"
+}};
+const CITY_MAP = CITY_MAP_CORRECTED;
 const DOMESTIC_KEYWORDS = {domestic_keywords_json};
 
 function getLocationInfo(city) {{
@@ -563,6 +580,7 @@ async function waitForDialogConfirmButton(timeout = 15000) {{
         if (btn) return btn;
         try {{
             const doc = await getMainDoc();
+            if (!doc) continue;
             btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (btn) return btn;
@@ -688,6 +706,7 @@ async function ensureListPage() {{
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getMainDoc();
+    if (!doc) return false;
     let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -769,7 +788,6 @@ async function tryMatchPlan(plan) {{
     const arrCity = plan["到达城市"];
     const depInfo = getLocationInfo(depCity);
     const arrInfo = getLocationInfo(arrCity);
-    // 标准化后的国家/城市名（用于匹配）
     const depMatchKey = depInfo.zone === "境外" ? depInfo.region : depCity;
     const arrMatchKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
 
