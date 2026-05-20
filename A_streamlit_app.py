@@ -173,21 +173,17 @@ def parse_flight_time(time_str):
         return 0, 0
 
 def extract_country(city_name):
-    # 1. 先尝试通过缩写映射（优先级高）
     parts = re.split(r'[\s\-]', city_name)
     if parts:
         first_part = parts[0]
         if first_part in ABBR_TO_COUNTRY:
             return ABBR_TO_COUNTRY[first_part]
-    # 2. 如果是台湾城市，直接返回台湾
     for tw_city in TAIWAN_CITIES:
         if tw_city in city_name:
             return "台湾"
-    # 3. 再尝试完整匹配国家名
     for country in COUNTRIES:
         if country in city_name:
             return country
-    # 4. 否则返回第一个词
     if parts:
         return parts[0]
     return city_name
@@ -219,7 +215,6 @@ def build_city_mappings(df, custom_detail_map):
     city_map = {}
 
     for city in cities:
-        # 台湾城市直接映射到台湾，不加入 detail_map
         if any(tw in city for tw in TAIWAN_CITIES):
             city_map[city] = "台湾"
             continue
@@ -236,7 +231,6 @@ def build_city_mappings(df, custom_detail_map):
             detail_map[city] = {"province": province, "district": district}
             city_map[city] = province
         else:
-            # 境外城市：使用标准化后的国家名称
             country = extract_country(city)
             city_map[city] = country
 
@@ -250,18 +244,10 @@ def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
 
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
+// 修改后的 getMainDoc：优先返回当前文档（因为页面没有 iframe）
 async function getMainDoc() {{
-    const iframe = document.querySelector('#main');
-    if (!iframe) {{
-        console.error('未找到 iframe #main');
-        return null;
-    }}
-    let doc = iframe.contentDocument;
-    while (!doc || !doc.querySelector('body')) {{
-        await sleep(200);
-        doc = iframe.contentDocument;
-    }}
-    return doc;
+    // 直接返回顶层文档
+    return document;
 }}
 
 async function waitForElement(selector, timeout = 15000, isXPath = true) {{
@@ -689,6 +675,7 @@ async function ensureListPage() {{
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getMainDoc();
+    if (!doc) return false;
     let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -768,9 +755,11 @@ async function tryMatchPlan(plan) {{
     const dateTarget = plan["出发日期"];
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
-    // 获取计划中到达城市的国家/地区名（用于境外匹配）
+    // 获取出发和到达的标准化信息
+    const depInfo = getLocationInfo(depCity);
     const arrInfo = getLocationInfo(arrCity);
-    const arrCountry = arrInfo.region;
+    const depKey = depInfo.zone === "境外" ? depInfo.region : depCity;
+    const arrKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -785,20 +774,8 @@ async function tryMatchPlan(plan) {{
         const segText = segEl.innerText.trim();
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
-        const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
-        let arrMatch = false;
-        if (arrInfo.zone === "境内") {{
-            // 境内：用城市名本身或区县名匹配
-            const district = CITY_DETAIL_MAP[arrCity]?.district;
-            if (district && kw.arrKeywords.some(kw => district.includes(kw))) {{
-                arrMatch = true;
-            }} else {{
-                arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
-            }}
-        }} else {{
-            // 境外：用国家名匹配
-            arrMatch = kw.arrKeywords.some(kw => arrCountry.includes(kw));
-        }}
+        const depMatch = kw.depKeywords.some(kw => depKey.includes(kw));
+        const arrMatch = kw.arrKeywords.some(kw => arrKey.includes(kw));
         if (depMatch && arrMatch) {{
             return row;
         }}
