@@ -244,31 +244,10 @@ def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
 
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
-// 增强版 getMainDoc：自动查找 iframe 并等待其加载
+// 修改后的 getMainDoc：优先返回当前文档（因为页面没有 iframe）
 async function getMainDoc() {{
-    const start = Date.now();
-    const timeout = 30000; // 30秒超时
-    while (Date.now() - start < timeout) {{
-        // 尝试通过 id 查找
-        let iframe = document.querySelector('#main');
-        if (!iframe) {{
-            // 如果找不到，尝试通过 name 属性
-            iframe = document.querySelector('iframe[name="main"]');
-        }}
-        if (!iframe) {{
-            // 尝试查找任何 iframe（通常第一个是主内容区域）
-            iframe = document.querySelector('iframe');
-        }}
-        if (iframe) {{
-            let doc = iframe.contentDocument;
-            if (doc && doc.querySelector('body')) {{
-                return doc;
-            }}
-        }}
-        await sleep(500);
-    }}
-    console.error('❌ 无法获取主文档，请检查页面是否包含 iframe');
-    return null;
+    // 直接返回顶层文档
+    return document;
 }}
 
 async function waitForElement(selector, timeout = 15000, isXPath = true) {{
