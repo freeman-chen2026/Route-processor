@@ -250,31 +250,18 @@ def generate_base_script(city_map_json, detail_map_json, domestic_keywords_json)
 
 function sleep(ms) {{ return new Promise(r => setTimeout(r, ms)); }}
 
-// 增强版 getMainDoc：自动查找 iframe 并等待其加载
 async function getMainDoc() {{
-    const start = Date.now();
-    const timeout = 30000; // 30秒超时
-    while (Date.now() - start < timeout) {{
-        // 尝试通过 id 查找
-        let iframe = document.querySelector('#main');
-        if (!iframe) {{
-            // 如果找不到，尝试通过标签和 name 属性
-            iframe = document.querySelector('iframe[name="main"]');
-        }}
-        if (!iframe) {{
-            // 还可以尝试其他常见的 iframe 选择器
-            iframe = document.querySelector('iframe:not([name=""])');
-        }}
-        if (iframe) {{
-            let doc = iframe.contentDocument;
-            if (doc && doc.querySelector('body')) {{
-                return doc;
-            }}
-        }}
-        await sleep(500);
+    const iframe = document.querySelector('#main');
+    if (!iframe) {{
+        console.error('未找到 iframe #main');
+        return null;
     }}
-    console.error('❌ 无法获取主文档，请检查页面是否包含 id="main" 的 iframe');
-    return null;
+    let doc = iframe.contentDocument;
+    while (!doc || !doc.querySelector('body')) {{
+        await sleep(200);
+        doc = iframe.contentDocument;
+    }}
+    return doc;
 }}
 
 async function waitForElement(selector, timeout = 15000, isXPath = true) {{
@@ -340,9 +327,6 @@ const CITY_MAP_CORRECTED = {{
     ...CITY_MAP_RAW,
     "印尼雅加达哈林": "印度尼西亚",
     "印尼巴厘岛": "印度尼西亚",
-    "印尼雅加达 哈达": "印度尼西亚",
-    "印尼韦达港": "印度尼西亚",
-    "印尼万鸦老": "印度尼西亚",
     "台北松山": "台湾",
     "台北桃园": "台湾",
     "高雄小港": "台湾",
@@ -580,7 +564,6 @@ async function waitForDialogConfirmButton(timeout = 15000) {{
         if (btn) return btn;
         try {{
             const doc = await getMainDoc();
-            if (!doc) continue;
             btn = doc.evaluate('//a[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (!btn) btn = doc.evaluate('//button[contains(text(), "确定")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (btn) return btn;
@@ -706,7 +689,6 @@ async function ensureListPage() {{
     if (btn) return true;
     console.log('当前不在列表页，尝试关闭可能遗留的对话框...');
     const doc = await getMainDoc();
-    if (!doc) return false;
     let closeBtn = doc.evaluate('//button[contains(text(), "取消")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "关闭")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     if (!closeBtn) closeBtn = doc.evaluate('//button[contains(text(), "返回")]', doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -786,10 +768,12 @@ async function tryMatchPlan(plan) {{
     const dateTarget = plan["出发日期"];
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
+    // 获取出发城市和到达城市的标准化信息
     const depInfo = getLocationInfo(depCity);
     const arrInfo = getLocationInfo(arrCity);
-    const depMatchKey = depInfo.zone === "境外" ? depInfo.region : depCity;
-    const arrMatchKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
+    // 境外城市使用国家名，境内城市使用原始城市名
+    const depKey = depInfo.zone === "境外" ? depInfo.region : depCity;
+    const arrKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -804,8 +788,8 @@ async function tryMatchPlan(plan) {{
         const segText = segEl.innerText.trim();
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
-        const depMatch = kw.depKeywords.some(kw => depMatchKey.includes(kw));
-        const arrMatch = kw.arrKeywords.some(kw => arrMatchKey.includes(kw));
+        const depMatch = kw.depKeywords.some(kw => depKey.includes(kw));
+        const arrMatch = kw.arrKeywords.some(kw => arrKey.includes(kw));
         if (depMatch && arrMatch) {{
             return row;
         }}
