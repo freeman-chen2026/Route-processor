@@ -768,12 +768,9 @@ async function tryMatchPlan(plan) {{
     const dateTarget = plan["出发日期"];
     const depCity = plan["出发城市"];
     const arrCity = plan["到达城市"];
-    // 获取出发城市和到达城市的标准化信息
-    const depInfo = getLocationInfo(depCity);
+    // 获取计划中到达城市的国家/地区名（用于境外匹配）
     const arrInfo = getLocationInfo(arrCity);
-    // 境外城市使用国家名，境内城市使用原始城市名
-    const depKey = depInfo.zone === "境外" ? depInfo.region : depCity;
-    const arrKey = arrInfo.zone === "境外" ? arrInfo.region : arrCity;
+    const arrCountry = arrInfo.region;
 
     for (let i = 0; i < rows.length; i++) {{
         const row = rows[i];
@@ -788,8 +785,20 @@ async function tryMatchPlan(plan) {{
         const segText = segEl.innerText.trim();
         const kw = extractCityKeywords(segText);
         if (!kw) continue;
-        const depMatch = kw.depKeywords.some(kw => depKey.includes(kw));
-        const arrMatch = kw.arrKeywords.some(kw => arrKey.includes(kw));
+        const depMatch = kw.depKeywords.some(kw => depCity.includes(kw));
+        let arrMatch = false;
+        if (arrInfo.zone === "境内") {{
+            // 境内：用城市名本身或区县名匹配
+            const district = CITY_DETAIL_MAP[arrCity]?.district;
+            if (district && kw.arrKeywords.some(kw => district.includes(kw))) {{
+                arrMatch = true;
+            }} else {{
+                arrMatch = kw.arrKeywords.some(kw => arrCity.includes(kw));
+            }}
+        }} else {{
+            // 境外：用国家名匹配
+            arrMatch = kw.arrKeywords.some(kw => arrCountry.includes(kw));
+        }}
         if (depMatch && arrMatch) {{
             return row;
         }}
